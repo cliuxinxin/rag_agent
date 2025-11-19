@@ -1,0 +1,591 @@
+./code.py
+--------------------------------------------------------------------------------
+import os
+
+def save_python_files(base_dir):
+    output_path = os.path.join(base_dir, "all_python_files.txt")
+
+    with open(output_path, "w", encoding="utf-8") as out:
+        for root, dirs, files in os.walk(base_dir):
+            # 去掉 venv
+            if "venv" in dirs:
+                dirs.remove("venv")
+
+            for fname in files:
+                if fname.endswith(".py"):
+                    full_path = os.path.join(root, fname)
+
+                    out.write(full_path + "\n")
+                    out.write("-" * 80 + "\n")
+
+                    try:
+                        with open(full_path, "r", encoding="utf-8") as f:
+                            out.write(f.read())
+                    except UnicodeDecodeError:
+                        with open(full_path, "r", encoding="latin-1") as f:
+                            out.write(f.read())
+
+                    out.write("\n\n")
+
+    print(f"Very good, sir. 已生成：{output_path}")
+
+if __name__ == "__main__":
+    base_directory = "."
+    save_python_files(base_directory)
+
+
+./frontend/app.py
+--------------------------------------------------------------------------------
+"""Streamlit 前端入口：支持多知识库管理。"""
+
+import sys
+import os
+import streamlit as st
+from dotenv import load_dotenv
+from langchain_core.documents import Document
+
+# 添加 src 路径
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.graph import graph
+from src.utils import load_file, split_documents
+from src.storage import save_kb, load_kbs, list_kbs, delete_kb
+
+load_dotenv()
+st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide")
+
+# 初始化 session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "chat"
+
+if "selected_kbs" not in st.session_state:
+    st.session_state.selected_kbs = []
+
+
+def render_kb_management():
+    """知识库管理界面 (Tab 2)。"""
+    st.header("📂 知识库管理")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("现有知识库")
+        existing_kbs = list_kbs()
+        if not existing_kbs:
+            st.info("暂无知识库，请在右侧创建。")
+        
+        for kb in existing_kbs:
+            c1, c2 = st.columns([3, 1])
+            c1.write(f"📄 {kb}")
+            if c2.button("删除", key=f"del_{kb}", type="primary"):
+                delete_kb(kb)
+                st.success(f"已删除知识库: {kb}")
+
+    with col2:
+        st.subheader("新建 / 追加知识")
+        
+        # 1. 选择或输入知识库名称
+        kb_action = st.radio("操作模式", ["追加到现有", "新建知识库"], horizontal=True)
+        
+        target_kb_name = ""
+        if kb_action == "追加到现有":
+            if existing_kbs:
+                target_kb_name = st.selectbox("选择知识库", existing_kbs)
+            else:
+                st.warning("请先新建知识库")
+        else:
+            target_kb_name = st.text_input("输入新知识库名称 (英文/数字)", placeholder="example_kb")
+
+        # 2. 上传文件或文本
+        upload_mode = st.tabs(["📁 上传文件", "📝 粘贴文本"])
+        raw_docs = []
+        
+        with upload_mode[0]:
+            uploaded_files = st.file_uploader("上传 PDF/TXT", type=["pdf", "txt"], accept_multiple_files=True)
+        
+        with upload_mode[1]:
+            text_input = st.text_area("输入长文本", height=150)
+
+        # 3. 提交按钮
+        if st.button("💾 保存到知识库", use_container_width=True, key="save_kb_btn"):
+            if not target_kb_name:
+                st.error("知识库名称不能为空！")
+                return
+                
+            with st.spinner("正在处理..."):
+                # 处理文件
+                if uploaded_files:
+                    for f in uploaded_files:
+                        raw_docs.extend(load_file(f))
+                
+                # 处理文本
+                if text_input:
+                    raw_docs.append(Document(page_content=text_input, metadata={"source": "text_input"}))
+                
+                if not raw_docs:
+                    st.warning("没有检测到输入内容。")
+                    return
+
+                # 切分并保存
+                chunks = split_documents(raw_docs)
+                save_kb(target_kb_name, chunks)
+                st.success(f"成功将 {len(chunks)} 个片段存入知识库: [{target_kb_name}]")
+
+
+def render_chat():
+    """聊天界面 (Tab 1)。"""
+    st.header("💬 智能问答")
+
+    # --- 侧边栏：选择知识库 ---
+    with st.sidebar:
+        st.title("🧠 知识库选择")
+        all_kbs = list_kbs()
+        selected_kbs = st.multiselect(
+            "请选择要检索的知识库 (支持多选)", 
+            all_kbs,
+            default=all_kbs[0] if all_kbs else None
+        )
+        
+        if not selected_kbs:
+            st.warning("⚠️ 请至少选择一个知识库")
+        else:
+            st.success(f"已加载 {len(selected_kbs)} 个知识库")
+            
+        # 将选中的知识库存储在 session_state 中
+        st.session_state.selected_kbs = selected_kbs
+
+    # --- 聊天区域 ---
+    # 显示历史消息
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+
+def handle_chat_input():
+    """处理聊天输入的逻辑。"""
+    # 只有在聊天标签页才显示输入框
+    if st.session_state.active_tab == "chat":
+        user_input = st.chat_input("请输入问题...", key="chat_input")
+        
+        if user_input:
+            selected_kbs = st.session_state.get("selected_kbs", [])
+            
+            if not selected_kbs:
+                st.error("请先在左侧侧边栏选择知识库！")
+                return
+
+            # 1. 加载选中的知识库文档到内存
+            with st.spinner("正在加载知识库索引..."):
+                source_documents = load_kbs(selected_kbs)
+
+            # 2. 显示用户输入
+            st.session_state.messages.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
+
+            # 3. 构造输入并调用 Agent
+            inputs = {
+                "question": user_input,
+                "source_documents": source_documents,
+                "search_count": 0,
+                "search_needed": False
+            }
+
+            with st.chat_message("assistant"):
+                status_box = st.status("Agent 思考中...", expanded=True)
+                final_res = ""
+                
+                try:
+                    for output in graph.stream(inputs):
+                        for key, val in output.items():
+                            if key == "retrieve":
+                                n = len(val.get("retrieved_documents", []))
+                                status_box.write(f"🔍 在选定库中检索到 {n} 条线索")
+                            elif key == "transform_query":
+                                q = val.get("question")
+                                status_box.write(f"🔄 优化搜索词: {q}")
+                            elif key == "generate":
+                                final_res = val.get("generation")
+                    
+                    status_box.update(label="回答完成", state="complete", expanded=False)
+                    st.markdown(final_res)
+                    st.session_state.messages.append({"role": "assistant", "content": final_res})
+
+                except Exception as e:
+                    st.error(f"运行错误: {e}")
+
+
+def main():
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        st.warning("请配置 .env 文件中的 DEEPSEEK_API_KEY")
+
+    # 顶部导航
+    tab_chat, tab_manage = st.tabs(["💬 对话模式", "⚙️ 知识库管理"])
+
+    with tab_chat:
+        st.session_state.active_tab = "chat"
+        render_chat()
+    
+    with tab_manage:
+        st.session_state.active_tab = "manage"
+        render_kb_management()
+    
+    # 处理聊天输入（放在 tabs 外面）
+    handle_chat_input()
+
+
+if __name__ == "__main__":
+    main()
+
+./src/bm25.py
+--------------------------------------------------------------------------------
+"""BM25 检索器封装。"""
+
+from typing import List
+import jieba
+from rank_bm25 import BM25Okapi
+from langchain_core.documents import Document
+
+
+class SimpleBM25Retriever:
+    """简单的内存级 BM25 检索器。"""
+
+    def __init__(self, documents: List[Document]):
+        self.documents = documents
+        # 预处理：中文分词
+        self.corpus = [self._tokenize(doc.page_content) for doc in documents]
+        self.bm25 = BM25Okapi(self.corpus)
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        """使用 Jieba 进行中文分词。"""
+        return list(jieba.cut(text))
+
+    def search(self, query: str, k: int = 3) -> List[Document]:
+        """执行检索。"""
+        tokenized_query = self._tokenize(query)
+        # 获取 top_k 文档
+        top_docs = self.bm25.get_top_n(tokenized_query, self.documents, n=k)
+        return top_docs
+
+./src/graph.py
+--------------------------------------------------------------------------------
+"""LangGraph 图构建与编译。"""
+
+from langgraph.graph import StateGraph, END
+from src.state import AgentState
+from src import nodes
+
+
+def decide_route(state: AgentState) -> str:
+    """路由决策逻辑。"""
+    if state.get("search_needed"):
+        # 限制重试次数为 3 次
+        if state.get("search_count", 0) < 3:
+            return "transform_query"
+    return "generate"
+
+
+# 构建图
+workflow = StateGraph(AgentState)
+
+# 添加节点
+workflow.add_node("retrieve", nodes.retrieve)
+workflow.add_node("grade_documents", nodes.grade_documents)
+workflow.add_node("transform_query", nodes.transform_query)
+workflow.add_node("generate", nodes.generate)
+
+# 设置边
+workflow.set_entry_point("retrieve")
+workflow.add_edge("retrieve", "grade_documents")
+
+workflow.add_conditional_edges(
+    "grade_documents",
+    decide_route,
+    {
+        "transform_query": "transform_query",
+        "generate": "generate"
+    }
+)
+
+workflow.add_edge("transform_query", "retrieve")
+workflow.add_edge("generate", END)
+
+# 编译图
+graph = workflow.compile()
+
+./src/__init__.py
+--------------------------------------------------------------------------------
+
+
+./src/utils.py
+--------------------------------------------------------------------------------
+"""文档加载与切分工具函数。"""
+
+import tempfile
+import os
+import json
+from typing import List
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+
+
+def load_file(uploaded_file) -> List[Document]:
+    """将 Streamlit 上传的文件转换为 Document 对象列表。"""
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+
+    try:
+        if file_ext == "pdf":
+            loader = PyPDFLoader(tmp_path)
+        else:
+            loader = TextLoader(tmp_path, encoding="utf-8")
+        return loader.load()
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def split_documents(docs: List[Document], chunk_size: int = 500) -> List[Document]:
+    """切分文档。"""
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=50,
+        separators=["\n\n", "\n", "。", "！", "？", "；", "；", " ", ""]
+    )
+    return text_splitter.split_documents(docs)
+
+
+def serialize_document(doc: Document) -> dict:
+    """将 Document 对象序列化为字典。"""
+    return {
+        "page_content": doc.page_content,
+        "metadata": doc.metadata
+    }
+
+
+def deserialize_document(data: dict) -> Document:
+    """从字典反序列化为 Document 对象。"""
+    return Document(
+        page_content=data["page_content"],
+        metadata=data["metadata"]
+    )
+
+
+def serialize_documents(docs: List[Document]) -> List[dict]:
+    """将 Document 对象列表序列化为字典列表。"""
+    return [serialize_document(doc) for doc in docs]
+
+
+def deserialize_documents(data: List[dict]) -> List[Document]:
+    """从字典列表反序列化为 Document 对象列表。"""
+    return [deserialize_document(item) for item in data]
+
+./src/storage.py
+--------------------------------------------------------------------------------
+"""知识库持久化管理模块。"""
+
+import os
+import json
+from typing import List
+from pathlib import Path
+from langchain_core.documents import Document
+
+# 数据存储目录
+STORAGE_DIR = Path("storage")
+STORAGE_DIR.mkdir(exist_ok=True)
+
+
+def list_kbs() -> List[str]:
+    """获取所有已存在的知识库名称。"""
+    return [f.stem for f in STORAGE_DIR.glob("*.json")]
+
+
+def save_kb(kb_name: str, new_docs: List[Document]):
+    """
+    保存文档到指定知识库。
+    如果是已存在的库，会追加内容。
+    """
+    file_path = STORAGE_DIR / f"{kb_name}.json"
+    
+    existing_data = []
+    if file_path.exists():
+        with open(file_path, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+    
+    # 将 Document 对象转换为可序列化的字典
+    new_data = [
+        {"page_content": doc.page_content, "metadata": doc.metadata} 
+        for doc in new_docs
+    ]
+    
+    merged_data = existing_data + new_data
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(merged_data, f, ensure_ascii=False, indent=2)
+
+
+def load_kbs(kb_names: List[str]) -> List[Document]:
+    """
+    加载多个知识库，合并为一个文档列表。
+    """
+    all_docs = []
+    for name in kb_names:
+        file_path = STORAGE_DIR / f"{name}.json"
+        if not file_path.exists():
+            continue
+            
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        # 将字典转回 Document 对象
+        for item in data:
+            all_docs.append(
+                Document(page_content=item["page_content"], metadata=item["metadata"])
+            )
+            
+    return all_docs
+
+
+def delete_kb(kb_name: str):
+    """删除指定知识库。"""
+    file_path = STORAGE_DIR / f"{kb_name}.json"
+    if file_path.exists():
+        os.remove(file_path)
+
+./src/nodes.py
+--------------------------------------------------------------------------------
+"""LangGraph 节点逻辑实现。"""
+
+import os
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from src.state import AgentState
+from src.bm25 import SimpleBM25Retriever
+
+
+def get_llm():
+    """获取LLM实例。"""
+    return ChatOpenAI(
+        model="deepseek-chat",
+        openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
+        openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.deepseek.com"),
+        temperature=0.1
+    )
+
+
+def retrieve(state: AgentState) -> dict:
+    """使用 BM25 检索文档。"""
+    question = state["question"]
+    source_docs = state.get("source_documents", [])
+
+    if not source_docs:
+        return {"retrieved_documents": []}
+
+    # 在内存中构建检索器 (针对无向量库场景)
+    retriever = SimpleBM25Retriever(source_docs)
+    results = retriever.search(question, k=3)
+    
+    return {"retrieved_documents": results}
+
+
+def grade_documents(state: AgentState) -> dict:
+    """评估文档相关性。"""
+    question = state["question"]
+    docs = state["retrieved_documents"]
+    filtered_docs = []
+
+    # 初始化 LLM (DeepSeek)
+    llm = get_llm()
+
+    system_prompt = (
+        "你是一个文档评估员。判断文档内容是否包含回答用户问题所需的信息。"
+        "只需回答 'yes' 或 'no'。"
+    )
+
+    for doc in docs:
+        msg = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Doc: {doc.page_content}\n\nQuery: {question}")
+        ]
+        grade = llm.invoke(msg).content.lower()
+        if "yes" in grade:
+            filtered_docs.append(doc)
+
+    # 如果没有文档通过筛选，标记需要重新搜索
+    search_needed = len(filtered_docs) == 0
+    return {"retrieved_documents": filtered_docs, "search_needed": search_needed}
+
+
+def transform_query(state: AgentState) -> dict:
+    """重写查询。"""
+    question = state["question"]
+    
+    # 初始化 LLM (DeepSeek)
+    llm = get_llm()
+    
+    msg = [
+        SystemMessage(content="""之前的搜索未找到相关结果。
+        请根据用户原问题，重写一个更适合BM25关键词搜索的查询字符串。
+        只输出新的查询语句。"""),
+        HumanMessage(content=f"Original: {question}")
+    ]
+    new_query = llm.invoke(msg).content
+    
+    return {
+        "question": new_query,
+        "search_count": state.get("search_count", 0) + 1
+    }
+
+
+def generate(state: AgentState) -> dict:
+    """生成最终回答。"""
+    question = state["question"]
+    docs = state["retrieved_documents"]
+    
+    # 初始化 LLM (DeepSeek)
+    llm = get_llm()
+    
+    context = "\n\n".join([d.page_content for d in docs])
+    
+    prompt = f"""基于以下参考文档回答问题。如果无法回答，请说明。
+    
+    [上下文]
+    {context}
+    
+    [问题]
+    {question}
+    """
+    response = llm.invoke(prompt)
+    return {"generation": response.content}
+
+./src/state.py
+--------------------------------------------------------------------------------
+"""定义 LangGraph 的状态结构。"""
+
+from typing import List, TypedDict, Optional
+from langchain_core.documents import Document
+
+
+class AgentState(TypedDict):
+    """Agent 的运行状态。"""
+    
+    question: str
+    # 原始知识库文档 (由前端传入)
+    source_documents: List[Document]
+    # 检索到的相关文档
+    retrieved_documents: List[Document]
+    # 最终生成的答案
+    generation: str
+    # 搜索重试次数
+    search_count: int
+    # 是否需要重新搜索标记
+    search_needed: bool
+
