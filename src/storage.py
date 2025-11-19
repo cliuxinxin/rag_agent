@@ -16,10 +16,9 @@ def list_kbs() -> List[str]:
     return [f.stem for f in STORAGE_DIR.glob("*.json")]
 
 
-def save_kb(kb_name: str, new_docs: List[Document]):
+def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese"):
     """
-    保存文档到指定知识库。
-    如果是已存在的库，会追加内容。
+    保存文档到指定知识库，并标记语言属性。
     """
     file_path = STORAGE_DIR / f"{kb_name}.json"
     
@@ -28,11 +27,15 @@ def save_kb(kb_name: str, new_docs: List[Document]):
         with open(file_path, "r", encoding="utf-8") as f:
             existing_data = json.load(f)
     
-    # 将 Document 对象转换为可序列化的字典
-    new_data = [
-        {"page_content": doc.page_content, "metadata": doc.metadata} 
-        for doc in new_docs
-    ]
+    # 将 Document 对象转换为可序列化的字典，并注入语言属性
+    new_data = []
+    for doc in new_docs:
+        # 注入语言到 metadata
+        doc.metadata["language"] = language
+        new_data.append({
+            "page_content": doc.page_content, 
+            "metadata": doc.metadata
+        })
     
     merged_data = existing_data + new_data
     

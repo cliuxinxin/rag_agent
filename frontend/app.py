@@ -59,6 +59,15 @@ def render_kb_management():
         else:
             target_kb_name = st.text_input("输入新知识库名称 (英文/数字)", placeholder="example_kb")
 
+        # === 新增：选择知识库语言 ===
+        kb_language = st.selectbox(
+            "选择文档主要语言 (用于优化检索)",
+            ["Chinese", "English", "Japanese", "Korean", "French"],
+            index=0,
+            help="DeepSeek 会将搜索词自动转换为此语言，提高检索准确率。"
+        )
+        # ===========================
+
         # 2. 上传文件或文本
         upload_mode = st.tabs(["📁 上传文件", "📝 粘贴文本"])
         raw_docs = []
@@ -91,8 +100,12 @@ def render_kb_management():
 
                 # 切分并保存
                 chunks = split_documents(raw_docs)
-                save_kb(target_kb_name, chunks)
-                st.success(f"成功将 {len(chunks)} 个片段存入知识库: [{target_kb_name}]")
+                
+                # === 修改：传入 selected language ===
+                save_kb(target_kb_name, chunks, language=kb_language)
+                # ==================================
+                
+                st.success(f"成功将 {len(chunks)} 个片段存入知识库: [{target_kb_name}] (语言: {kb_language})")
                 st.rerun()
 
 

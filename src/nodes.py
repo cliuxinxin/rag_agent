@@ -27,7 +27,7 @@ def retrieve(state: AgentState) -> dict:
 
     # 在内存中构建检索器 (针对无向量库场景)
     retriever = SimpleBM25Retriever(source_docs)
-    results = retriever.search(question, k=3)
+    results = retriever.search(question, k=10)
     
     return {"retrieved_documents": results}
 
@@ -61,18 +61,37 @@ def grade_documents(state: AgentState) -> dict:
 
 
 def transform_query(state: AgentState) -> dict:
-    """重写查询。"""
+    """重写查询：根据知识库语言生成对应的搜索关键词。"""
     question = state["question"]
+    source_docs = state.get("source_documents", [])
     
+    # 1. 检测知识库的主要语言
+    # 从 metadata 中提取语言，统计出现最多的语言
+    languages = [doc.metadata.get("language", "Chinese") for doc in source_docs]
+    
+    if languages:
+        # 获取出现频率最高的语言作为目标语言
+        target_language = max(set(languages), key=languages.count)
+    else:
+        target_language = "Chinese" # 默认
+
     # 初始化 LLM (DeepSeek)
     llm = get_llm()
     
+    # 2. 构建提示词，强制要求转换为目标语言
     msg = [
-        SystemMessage(content="""之前的搜索未找到相关结果。
-        请根据用户原问题，重写一个更适合BM25关键词搜索的查询字符串。
-        只输出新的查询语句。"""),
-        HumanMessage(content=f"Original: {question}")
+        SystemMessage(content=f"""你是一个专业的搜索引擎优化专家。
+        目前的知识库主要语言是：【{target_language}】。
+        
+        之前的直接搜索效果不佳。请执行以下操作：
+        1. 分析用户的问题意图。
+        2. 将问题转换为【{target_language}】（如果原问题已经是该语言，则进行同义词扩展）。
+        3. 生成最适合 BM25 关键词匹配的查询字符串。
+        
+        只输出新的查询语句，不要包含任何解释。"""),
+        HumanMessage(content=f"User Query: {question}")
     ]
+    
     new_query = llm.invoke(msg).content
     
     return {
