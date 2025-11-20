@@ -4,40 +4,36 @@ from langgraph.graph import StateGraph, END
 from src.state import AgentState
 from src import nodes
 
+# 定义条件路由逻辑
+def route_supervisor(state: AgentState) -> str:
+    # 读取 Supervisor 决定的 next 字段
+    return state["next"]
 
-def decide_route(state: AgentState) -> str:
-    """路由决策逻辑。"""
-    if state.get("search_needed"):
-        # 限制重试次数为 3 次
-        if state.get("search_count", 0) < 3:
-            return "transform_query"
-    return "generate"
-
-
-# 构建图
 workflow = StateGraph(AgentState)
 
 # 添加节点
-workflow.add_node("retrieve", nodes.retrieve)
-workflow.add_node("grade_documents", nodes.grade_documents)
-workflow.add_node("transform_query", nodes.transform_query)
-workflow.add_node("generate", nodes.generate)
+workflow.add_node("Supervisor", nodes.supervisor_node)
+workflow.add_node("Searcher", nodes.search_node)
+workflow.add_node("Answerer", nodes.answer_node)
 
-# 设置边
-workflow.set_entry_point("retrieve")
-workflow.add_edge("retrieve", "grade_documents")
+# 设置入口
+workflow.set_entry_point("Supervisor")
 
+# 添加边
+# 1. Supervisor -> (Searcher 或 Answerer)
 workflow.add_conditional_edges(
-    "grade_documents",
-    decide_route,
+    "Supervisor",
+    route_supervisor,
     {
-        "transform_query": "transform_query",
-        "generate": "generate"
+        "Searcher": "Searcher",
+        "Answerer": "Answerer"
     }
 )
 
-workflow.add_edge("transform_query", "retrieve")
-workflow.add_edge("generate", END)
+# 2. Searcher -> Supervisor (搜完回去汇报)
+workflow.add_edge("Searcher", "Supervisor")
 
-# 编译图
+# 3. Answerer -> END (回答完结束)
+workflow.add_edge("Answerer", END)
+
 graph = workflow.compile()

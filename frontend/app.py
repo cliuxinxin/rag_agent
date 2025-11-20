@@ -5,6 +5,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, AIMessage
 
 # 添加 src 路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -14,7 +15,7 @@ from src.utils import load_file, split_documents
 from src.storage import save_kb, load_kbs, list_kbs, delete_kb
 
 load_dotenv()
-st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide")
+st.set_page_config(page_title="DeepSeek RAG Supervisor", layout="wide")
 
 # 初始化 session state
 if "messages" not in st.session_state:
@@ -158,53 +159,70 @@ def render_chat():
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # 3. 构造输入并调用 Agent
-        inputs = {
-            "question": user_input,
+        # 3. 初始化 Graph 输入
+        # 将历史消息转换为 LangChain 格式，以便 Agent 拥有多轮对话记忆
+        # 这里简化处理，只传当前问题作为起始，如果需要多轮记忆，需从 session_state.messages 转换
+        initial_state = {
+            "messages": [HumanMessage(content=user_input)],
             "source_documents": source_documents,
-            "search_count": 0,
-            "search_needed": False
+            "next": "Supervisor", # 默认入口
+            "current_search_query": ""
         }
 
         with st.chat_message("assistant"):
-            status_box = st.status("Agent 思考中...", expanded=True)
-            final_res = ""
-            
+            # 创建一个容器用于显示实时的思考过程
+            status_container = st.status("Supervisor 正在调度...", expanded=True)
+            final_answer = ""
+
             try:
-                for output in graph.stream(inputs):
-                    for key, val in output.items():
-                        if key == "retrieve":
-                            docs = val.get("retrieved_documents", [])
-                            n = len(docs)
-                            status_box.write(f"🔍 在选定库中检索到 {n} 条线索")
+                # 运行 Graph
+                # stream_mode="updates" 会返回每个节点更新的状态
+                for step in graph.stream(initial_state):
+                    for node_name, update in step.items():
+                        
+                        # --- Supervisor 节点 ---
+                        if node_name == "Supervisor":
+                            next_node = update.get("next")
+                            query = update.get("current_search_query")
                             
-                            # 遍历显示检索到的具体内容
-                            for i, doc in enumerate(docs):
-                                status_box.markdown(f"**📄 线索 {i + 1}**")
-                                # 使用引用格式 (>) 显示文本内容，使其在 UI 上有区分度
-                                status_box.markdown(f"> {doc.page_content}")
-                                # 显示元数据（例如文件名）
-                                source = doc.metadata.get("source", "未知来源")
-                                status_box.caption(f"来源: {source}")
-                                status_box.markdown("---") # 添加分割线
-                        elif key == "transform_query":
-                            q = val.get("question")
-                            status_box.write(f"🔄 优化搜索词: {q}")
-                        elif key == "generate":
-                            final_res = val.get("generation")
+                            if next_node == "Searcher":
+                                status_container.write(f"🧠 Supervisor 决策: 派遣 Searcher 去搜索 '{query}'")
+                            elif next_node == "Answerer":
+                                status_container.write(f"🧠 Supervisor 决策: 信息已足够，派遣 Answerer 生成最终回答")
+                        
+                        # --- Searcher 节点 ---
+                        elif node_name == "Searcher":
+                            # Searcher 返回的是 AIMessage
+                            if "messages" in update and update["messages"]:
+                                msg = update["messages"][0]
+                                if hasattr(msg, 'content'):
+                                    content = msg.content
+                                    status_container.write(f"🔍 Searcher 搜索结果:")
+                                    status_container.markdown(content)
+                        
+                        # --- Answerer 节点 ---
+                        elif node_name == "Answerer":
+                            # Answerer 返回的是最终回答
+                            if "messages" in update and update["messages"]:
+                                msg = update["messages"][0]
+                                if hasattr(msg, 'content'):
+                                    final_answer = msg.content
+                                    status_container.write("✅ Answerer 已生成最终回答")
+                                    status_container.markdown(final_answer)
+                        
+                        # --- END ---
+                        elif node_name == "__end__":
+                            status_container.update(label="回答完成", state="complete", expanded=False)
                 
-                # 运行结束后，状态改为完成
-                # expanded=False 会默认折叠，用户点击 "回答完成" 即可再次展开查看刚才的线索
-                status_box.update(label="回答完成 (点击查看思考过程)", state="complete", expanded=False)
-                
-                if final_res:
-                    st.markdown(final_res)
-                    st.session_state.messages.append({"role": "assistant", "content": final_res})
+                # 显示最终回答
+                if final_answer:
+                    st.markdown(final_answer)
+                    st.session_state.messages.append({"role": "assistant", "content": final_answer})
                 else:
                     st.warning("未能生成回答，请检查日志。")
-
+            
             except Exception as e:
-                status_box.update(label="发生错误", state="error")
+                status_container.update(label="发生错误", state="error")
                 st.error(f"运行错误: {e}")
 
 
