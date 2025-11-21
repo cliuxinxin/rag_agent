@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.graph import graph
 from src.utils import load_file, split_documents
-from src.storage import save_kb, load_kbs, list_kbs, delete_kb
+from src.storage import save_kb, load_kbs, list_kbs, delete_kb, get_kb_details
 
 load_dotenv()
 st.set_page_config(page_title="DeepSeek RAG Supervisor", layout="wide")
@@ -26,84 +26,97 @@ if "selected_kbs" not in st.session_state:
 
 
 def render_kb_management():
-    """知识库管理界面。"""
     st.header("📂 知识库管理")
     
-    col1, col2 = st.columns([1, 2])
+    # === 这里定义了两个 Tab ===
+    tabs = st.tabs(["📚 知识库列表 & 检视", "➕ 新建/追加知识"])
     
-    with col1:
-        st.subheader("现有知识库")
+    # === Tab 1: 列表与检视 (你之前没看到的可能是这个) ===
+    with tabs[0]:
         existing_kbs = list_kbs()
         if not existing_kbs:
-            st.info("暂无知识库，请在右侧创建。")
-        
-        for kb in existing_kbs:
-            c1, c2 = st.columns([3, 1])
-            c1.write(f"📄 {kb}")
-            if c2.button("删除", key=f"del_{kb}", type="primary"):
-                delete_kb(kb)
-                st.success(f"已删除知识库: {kb}")
-                st.rerun()
+            st.info("暂无知识库。请去第二个标签页新建。")
+        else:
+            col_list, col_detail = st.columns([1, 2])
+            with col_list:
+                st.subheader("知识库列表")
+                selected_kb_to_view = st.radio("选择知识库查看详情", existing_kbs)
+                
+                st.markdown("---")
+                if st.button(f"🗑️ 删除 {selected_kb_to_view}", type="primary"):
+                    delete_kb(selected_kb_to_view)
+                    st.success(f"已删除 {selected_kb_to_view}")
+                    st.rerun()
+            
+            with col_detail:
+                st.subheader(f"🔍 检视: {selected_kb_to_view}")
+                details = get_kb_details(selected_kb_to_view)
+                
+                m1, m2 = st.columns(2)
+                m1.metric("片段数量", details["doc_count"])
+                m2.metric("总字符数", details["total_chars"])
+                
+                st.divider()
+                st.write("📄 **内容预览 (随机前5条)**")
+                if details["preview"]:
+                    for item in details["preview"]:
+                        with st.container(border=True):
+                            st.caption(f"来源: {item['source']}")
+                            st.text(item['content'])
+                else:
+                    st.write("该知识库为空或无法读取。")
 
-    with col2:
-        st.subheader("新建 / 追加知识")
-        
-        # 1. 选择或输入知识库名称
-        kb_action = st.radio("操作模式", ["追加到现有", "新建知识库"], horizontal=True)
+    # === Tab 2: 新建/追加 ===
+    with tabs[1]:
+        st.subheader("上传文档")
+        kb_action = st.radio("模式", ["追加到现有", "新建知识库"], horizontal=True)
         
         target_kb_name = ""
         if kb_action == "追加到现有":
             if existing_kbs:
-                target_kb_name = st.selectbox("选择知识库", existing_kbs)
+                target_kb_name = st.selectbox("选择目标库", existing_kbs)
             else:
-                st.warning("请先新建知识库")
+                st.warning("请先新建")
         else:
-            target_kb_name = st.text_input("输入新知识库名称 (英文/数字)", placeholder="example_kb")
+            target_kb_name = st.text_input("新库名称 (英文/数字)", placeholder="kb_v1")
 
-        # === 新增：选择知识库语言 ===
-        kb_language = st.selectbox(
-            "选择文档主要语言 (用于优化检索)",
-            ["Chinese", "English", "Japanese", "Korean", "French"],
-            index=0,
-            help="DeepSeek 会将搜索词自动转换为此语言，提高检索准确率。"
-        )
-        # ===========================
+        kb_language = st.selectbox("文档主要语言", ["Chinese", "English"], index=0)
 
-        # 2. 上传文件或文本
         upload_mode = st.tabs(["📁 上传文件", "📝 粘贴文本"])
         raw_docs = []
         
         with upload_mode[0]:
-            uploaded_files = st.file_uploader("上传 PDF/TXT", type=["pdf", "txt"], accept_multiple_files=True)
+            uploaded_files = st.file_uploader("支持 PDF/TXT", type=["pdf", "txt"], accept_multiple_files=True)
         
         with upload_mode[1]:
-            text_input = st.text_area("输入长文本", height=150)
+            text_input = st.text_area("输入文本", height=150)
 
-        # 3. 提交按钮
-        if st.button("💾 保存到知识库", use_container_width=True, key="save_kb_btn"):
+        if st.button("💾 开始处理并保存", use_container_width=True):
             if not target_kb_name:
-                st.error("知识库名称不能为空！")
+                st.error("请输入名称")
                 return
                 
-            with st.spinner("正在处理..."):
-                # 处理文件
-                if uploaded_files:
-                    for f in uploaded_files:
-                        raw_docs.extend(load_file(f))
-                
-                # 处理文本
-                if text_input:
-                    raw_docs.append(Document(page_content=text_input, metadata={"source": "text_input"}))
-                
-                if not raw_docs:
-                    st.warning("没有检测到输入内容。")
-                    return
+            if uploaded_files:
+                for f in uploaded_files:
+                    raw_docs.extend(load_file(f))
+            
+            # 处理文本
+            if text_input:
+                raw_docs.append(Document(page_content=text_input, metadata={"source": "text_input"}))
+            
+            if not raw_docs:
+                st.warning("没有检测到输入内容。")
+                return
 
-                # 切分并保存
+            # 切分并保存
+            with st.spinner("正在处理..."):
                 chunks = split_documents(raw_docs)
                 
-                # === 修改：传入 selected language ===
-                save_kb(target_kb_name, chunks, language=kb_language)
+                # 显示进度条
+                progress_bar = st.progress(0, text="准备向量化...")
+                
+                # === 修改：传入 selected language 和 progress bar ===
+                save_kb(target_kb_name, chunks, language=kb_language, progress_bar=progress_bar)
                 # ==================================
                 
                 st.success(f"成功将 {len(chunks)} 个片段存入知识库: [{target_kb_name}] (语言: {kb_language})")
@@ -152,7 +165,8 @@ def render_chat():
 
         # 1. 加载选中的知识库文档到内存
         with st.spinner("正在加载知识库索引..."):
-            source_documents = load_kbs(selected_kbs)
+            # load_kbs 现在返回两个值
+            source_documents, vector_store = load_kbs(selected_kbs)
 
         # 2. 显示用户输入
         st.session_state.messages.append({"role": "user", "content": user_input})
@@ -165,8 +179,12 @@ def render_chat():
         initial_state = {
             "messages": [HumanMessage(content=user_input)],
             "source_documents": source_documents,
+            "vector_store": vector_store,  # 传入 VectorStore
             "next": "Supervisor", # 默认入口
-            "current_search_query": ""
+            "current_search_query": "",
+            "final_evidence": [],
+            # 初始化计数器
+            "loop_count": 0
         }
 
         with st.chat_message("assistant"):
@@ -175,20 +193,25 @@ def render_chat():
             final_answer = ""
 
             try:
+                # === 核心修改：增加 recursion_limit 配置 ===
+                # 默认是 25，我们增加到 50，配合代码里的 MAX_LOOPS=6 逻辑双重保险
+                graph_config = {"recursion_limit": 50}
+                
                 # 运行 Graph
                 # stream_mode="updates" 会返回每个节点更新的状态
-                for step in graph.stream(initial_state):
+                for step in graph.stream(initial_state, config=graph_config):
                     for node_name, update in step.items():
                         
                         # --- Supervisor 节点 ---
                         if node_name == "Supervisor":
                             next_node = update.get("next")
                             query = update.get("current_search_query")
+                            loop = update.get("loop_count", 0)
                             
                             if next_node == "Searcher":
-                                status_container.write(f"🧠 Supervisor 决策: 派遣 Searcher 去搜索 '{query}'")
+                                status_container.write(f"🔄 **第 {loop} 轮思考**: 发现缺口，指派搜索 `{query}`")
                             elif next_node == "Answerer":
-                                status_container.write(f"🧠 Supervisor 决策: 信息已足够，派遣 Answerer 生成最终回答")
+                                status_container.write("✅ **决策**: 信息充足 (或达到上限)，准备回答。")
                         
                         # --- Searcher 节点 ---
                         elif node_name == "Searcher":

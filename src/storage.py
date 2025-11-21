@@ -1,72 +1,161 @@
-"""知识库持久化管理模块。"""
-
 import os
 import json
-from typing import List
+import shutil
+from typing import List, Tuple, Any, Dict
 from pathlib import Path
 from langchain_core.documents import Document
+from langchain_community.vectorstores import FAISS
+from src.embeddings import HunyuanEmbeddings
 
-# 数据存储目录
 STORAGE_DIR = Path("storage")
 STORAGE_DIR.mkdir(exist_ok=True)
 
-
 def list_kbs() -> List[str]:
-    """获取所有已存在的知识库名称。"""
     return [f.stem for f in STORAGE_DIR.glob("*.json")]
 
+def get_kb_details(kb_name: str) -> Dict:
+    """
+    获取知识库的详细信息（用于检视）。
+    """
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    info = {
+        "name": kb_name,
+        "doc_count": 0,
+        "total_chars": 0,
+        "languages": set(),
+        "preview": []
+    }
+    
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                info["doc_count"] = len(data)
+                for idx, item in enumerate(data):
+                    content = item.get("page_content", "")
+                    meta = item.get("metadata", {})
+                    info["total_chars"] += len(content)
+                    if "language" in meta:
+                        info["languages"].add(meta["language"])
+                    
+                    # 取前5条作为预览
+                    if idx < 5:
+                        info["preview"].append({
+                            "content": content[:200] + "..." if len(content) > 200 else content,
+                            "source": meta.get("source", "unknown")
+                        })
+            except:
+                pass
+    
+    info["languages"] = list(info["languages"])
+    return info
 
-def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese"):
+def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese", progress_bar=None):
     """
-    保存文档到指定知识库，并标记语言属性。
+    保存知识库，支持进度条回调。
+    progress_bar: Streamlit 的进度条对象 (st.progress)
     """
-    file_path = STORAGE_DIR / f"{kb_name}.json"
-    
-    existing_data = []
-    if file_path.exists():
-        with open(file_path, "r", encoding="utf-8") as f:
-            existing_data = json.load(f)
-    
-    # 将 Document 对象转换为可序列化的字典，并注入语言属性
-    new_data = []
+    # 1. JSON 处理
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    existing_docs = []
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                for item in data:
+                    existing_docs.append(Document(page_content=item["page_content"], metadata=item["metadata"]))
+            except: pass
+            
     for doc in new_docs:
-        # 注入语言到 metadata
         doc.metadata["language"] = language
-        new_data.append({
-            "page_content": doc.page_content, 
-            "metadata": doc.metadata
-        })
+        
+    all_docs = existing_docs + new_docs
     
-    merged_data = existing_data + new_data
+    serialized_data = [{"page_content": d.page_content, "metadata": d.metadata} for d in all_docs]
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(serialized_data, f, ensure_ascii=False, indent=2)
+
+    # 2. FAISS 向量处理 (带进度条)
+    vector_path = STORAGE_DIR / f"{kb_name}_faiss"
+    embeddings = HunyuanEmbeddings() 
+
+    # 定义回调函数更新 UI
+    def _update_progress(current, total):
+        if progress_bar:
+            # 计算百分比 0.0 -> 1.0
+            percent = min(current / total, 1.0)
+            progress_bar.progress(percent, text=f"正在向量化: {current}/{total}")
+
+    # 提取文本进行向量化
+    print(f"开始向量化 {len(new_docs)} 个片段...")
+    texts = [d.page_content for d in new_docs]
+    metadatas = [d.metadata for d in new_docs]
     
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(merged_data, f, ensure_ascii=False, indent=2)
+    # 并发生成向量
+    raw_embeddings = embeddings.embed_documents(texts, progress_callback=_update_progress)
+    
+    # === 关键修复：清洗数据 ===
+    # 剔除掉那些因为 API 错误变成 None 或 [] 的向量
+    valid_text_embeddings = []
+    valid_metadatas = []
+    
+    success_count = 0
+    for text, emb, meta in zip(texts, raw_embeddings, metadatas):
+        if emb and len(emb) > 0:
+            # FAISS 要求格式: (text, embedding_vector)
+            valid_text_embeddings.append((text, emb))
+            valid_metadatas.append(meta)
+            success_count += 1
+        else:
+            print(f"⚠️ 跳过失败的向量: {text[:20]}...")
+            
+    if not valid_text_embeddings:
+        print("❌ 所有向量化请求均失败，请检查 API Key 或网络。")
+        return # 不保存 FAISS，但 JSON 已经保存了，至少 BM25 能用
 
+    print(f"有效向量: {success_count}/{len(texts)}")
+    
+    # 保存 FAISS
+    if vector_path.exists():
+        try:
+            vectorstore = FAISS.load_local(str(vector_path), embeddings, allow_dangerous_deserialization=True)
+            vectorstore.add_embeddings(valid_text_embeddings, valid_metadatas)
+        except:
+            vectorstore = FAISS.from_embeddings(valid_text_embeddings, embeddings, valid_metadatas)
+    else:
+        vectorstore = FAISS.from_embeddings(valid_text_embeddings, embeddings, valid_metadatas)
+    
+    vectorstore.save_local(str(vector_path))
 
-def load_kbs(kb_names: List[str]) -> List[Document]:
-    """
-    加载多个知识库，合并为一个文档列表。
-    """
+# load_kbs 和 delete_kb 保持不变 (或者复制之前的)
+def load_kbs(kb_names: List[str]) -> Tuple[List[Document], Any]:
     all_docs = []
-    for name in kb_names:
-        file_path = STORAGE_DIR / f"{name}.json"
-        if not file_path.exists():
-            continue
-            
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            
-        # 将字典转回 Document 对象
-        for item in data:
-            all_docs.append(
-                Document(page_content=item["page_content"], metadata=item["metadata"])
-            )
-            
-    return all_docs
+    merged_vectorstore = None
+    embeddings = HunyuanEmbeddings()
 
+    for name in kb_names:
+        json_path = STORAGE_DIR / f"{name}.json"
+        if json_path.exists():
+            with open(json_path, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                    for item in data:
+                        all_docs.append(Document(page_content=item["page_content"], metadata=item["metadata"]))
+                except: pass
+        
+        vector_path = STORAGE_DIR / f"{name}_faiss"
+        if vector_path.exists():
+            try:
+                vs = FAISS.load_local(str(vector_path), embeddings, allow_dangerous_deserialization=True)
+                if merged_vectorstore is None:
+                    merged_vectorstore = vs
+                else:
+                    merged_vectorstore.merge_from(vs)
+            except: pass
+    return all_docs, merged_vectorstore
 
 def delete_kb(kb_name: str):
-    """删除指定知识库。"""
-    file_path = STORAGE_DIR / f"{kb_name}.json"
-    if file_path.exists():
-        os.remove(file_path)
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    if json_path.exists(): os.remove(json_path)
+    vector_path = STORAGE_DIR / f"{kb_name}_faiss"
+    if vector_path.exists(): shutil.rmtree(vector_path)

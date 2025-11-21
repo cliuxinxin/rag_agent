@@ -1,4 +1,4 @@
-streamlit
+·streamlit
 langchain
 langchain-community
 langchain-openai
@@ -7,3 +7,4 @@ rank_bm25
 jieba
 python-dotenv
 pypdf
+faiss-cpu
