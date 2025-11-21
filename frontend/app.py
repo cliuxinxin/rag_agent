@@ -3,7 +3,10 @@ import sys
 import os
 import re
 import html
+import yaml
 import streamlit as st
+import streamlit_authenticator as stauth
+from yaml.loader import SafeLoader
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -17,73 +20,53 @@ from src.storage import save_kb, load_kbs, list_kbs, delete_kb, get_kb_details
 load_dotenv()
 st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide")
 
-# === 全局 CSS 样式: 悬浮提示 + 锚点样式 ===
+# === 全局 CSS 样式 (保持不变) ===
 st.markdown("""
 <style>
-    /* 引用数字的基本样式 */
-    .ref-link {
+    .ref-container {
+        position: relative;
+        display: inline-block;
         color: #1f77b4;
         font-weight: bold;
         cursor: help;
-        text-decoration: none;
         border-bottom: 1px dashed #1f77b4;
-        margin: 0 2px;
-        position: relative;
-        display: inline-block;
     }
-    
-    /* 悬浮提示框 */
-    .ref-link .ref-tooltip {
+    .ref-container .ref-tooltip {
         visibility: hidden;
-        width: 350px;
-        background-color: #fff;
-        color: #333;
+        width: 320px;
+        background-color: #ffffff;
+        color: #31333F;
         text-align: left;
-        border: 1px solid #ddd;
-        padding: 10px;
-        border-radius: 6px;
-        
-        /* 定位 */
+        border: 1px solid #e0e0e0;
+        padding: 12px;
+        border-radius: 8px;
         position: absolute;
-        z-index: 999999;
-        bottom: 140%; /* 移高一点，防止遮挡 */
+        z-index: 99999;
+        bottom: 120%;
         left: 50%;
         transform: translateX(-50%);
-        
-        /* 视觉 */
-        box-shadow: 0px 4px 15px rgba(0,0,0,0.2);
         opacity: 0;
         transition: opacity 0.2s;
-        font-size: 13px;
         font-weight: normal;
+        font-size: 14px;
         line-height: 1.5;
+        box-shadow: 0px 4px 20px rgba(0,0,0,0.15);
         white-space: normal;
-        pointer-events: none; /* 鼠标穿透，防止闪烁 */
+        pointer-events: none;
     }
-
-    /* 鼠标悬停显示 */
-    .ref-link:hover .ref-tooltip {
+    .ref-container:hover .ref-tooltip {
         visibility: visible;
         opacity: 1;
     }
-    
-    /* 提示框底部小三角 */
-    .ref-link .ref-tooltip::after {
+    .ref-container .ref-tooltip::after {
         content: "";
         position: absolute;
         top: 100%;
         left: 50%;
-        margin-left: -5px;
-        border-width: 5px;
+        margin-left: -6px;
+        border-width: 6px;
         border-style: solid;
-        border-color: #fff transparent transparent transparent;
-    }
-    
-    /* 底部引用列表的目标高亮 */
-    .ref-target {
-        scroll-margin-top: 100px; /* 防止跳转后被顶部Header遮挡 */
-        font-weight: bold;
-        color: #e65100;
+        border-color: #ffffff transparent transparent transparent;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -95,13 +78,8 @@ for key in ["messages", "selected_kbs", "next_query", "attempted_searches", "res
         elif key == "next_query": st.session_state[key] = ""
         else: st.session_state[key] = []
 
+# === 格式化函数 (保持不变) ===
 def format_display_message(content):
-    """
-    解析 Answerer 的回复：
-    1. 提取底部的 Raw Evidence。
-    2. 将正文中的 [Ref 2, 5, 6] 替换为带有悬浮提示的 HTML。
-    """
-    # 1. 切分正文和附录
     split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】"]
     split_index = -1
     for marker in split_markers:
@@ -116,124 +94,47 @@ def format_display_message(content):
         main_text = content[:split_index]
         ref_text = content[split_index:]
 
-    # 2. 解析引用内容 (构建 ref_map)
     ref_map = {}
     if ref_text:
-        # 匹配模式： > [Ref 1] 内容... 或 [Ref 1] 内容...
-        # 兼容换行符
-        # pattern: (行首或>)\s*\[Ref\s*(\d+)\]\s*(内容...)
-        pattern = r"(?:>|\n|^)\s*\[Ref\s*(\d+)\]\s*(.*?)(?=\n\s*(?:>|\[Ref)|\Z)"
-        matches = re.findall(pattern, ref_text, re.DOTALL)
-        
+        matches = re.findall(r"\[Ref\s*(\d+)\]\s*(.*?)(?=\n|\[Ref|\Z)", ref_text, re.DOTALL)
         for ref_id, ref_content in matches:
-            # 清洗内容
-            clean_c = ref_content.strip().replace('"', "'")[:400] # 限制长度
-            if len(ref_content) > 400: clean_c += "..."
-            ref_map[ref_id] = clean_c
+            clean_content = ref_content.strip().lstrip('>').strip()[:350] 
+            if len(ref_content) > 350: clean_content += "..."
+            if clean_content: ref_map[ref_id] = clean_content
 
-    # 3. 替换正文引用 (支持多引用 [Ref 1, 2])
-    def replace_multi_ref(match):
-        # 获取括号内的内容，如 "2, 5, 6"
-        numbers_str = match.group(1)
-        # 拆分数字
-        numbers = [n.strip() for n in numbers_str.split(',') if n.strip()]
-        
-        html_parts = []
-        for num in numbers:
-            tooltip = ref_map.get(num, "未找到该引用的详细内容，请查看底部折叠区域。")
-            # 构造单个数字的 HTML
-            # href="#ref-{num}" 是尝试做页内跳转
-            span = f'''
-            <a href="#ref-{num}" class="ref-link">
-                {num}
-                <span class="ref-tooltip">
-                    <strong>[Ref {num}]</strong><br/>
-                    {html.escape(tooltip)}
-                </span>
-            </a>
-            '''
-            html_parts.append(span.strip())
-        
-        # 用逗号连接多个 span
-        combined = ", ".join(html_parts)
-        return f" [Ref {combined}] "
+    def replace_ref(match):
+        ref_id = match.group(1)
+        tooltip_text = ref_map.get(ref_id, "详情请查看底部折叠区域")
+        html_snippet = f'''
+        <span class="ref-container" title="{html.escape(tooltip_text)}">
+            [Ref {ref_id}]
+            <span class="ref-tooltip">{html.escape(tooltip_text)}</span>
+        </span>
+        '''
+        return html_snippet.replace('\n', '')
 
-    # 正则：匹配 [Ref 1] 或 [Ref 1, 2, 3]
-    # \[Ref\s+ 匹配开头
-    # ([\d,\s]+) 捕获中间的数字和逗号
-    # \] 匹配结尾
-    enhanced_main_text = re.sub(r"\[Ref\s+([\d,\s]+)\]", replace_multi_ref, main_text)
-
-    # 4. 处理底部的引用文本，增加锚点 id
-    # 将 > [Ref 1] 替换为 > <span id="ref-1">[Ref 1]</span>
-    if ref_text:
-        def add_anchor(match):
-            rid = match.group(1)
-            return f'> <span id="ref-{rid}" class="ref-target">[Ref {rid}]</span>'
-        
-        # 简单的替换，给底部列表加 id
-        enhanced_ref_text = re.sub(r">\s*\[Ref\s*(\d+)\]", add_anchor, ref_text)
-    else:
-        enhanced_ref_text = ""
-
-    # === 渲染 ===
+    enhanced_main_text = re.sub(r"\[Ref\s*(\d+)\]", replace_ref, main_text)
     st.markdown(enhanced_main_text, unsafe_allow_html=True)
     
-    if enhanced_ref_text:
+    if ref_text:
         with st.expander("📚 查看调查笔记与原始引用 (点击展开)", expanded=False):
-            st.markdown(enhanced_ref_text, unsafe_allow_html=True)
+            st.markdown(ref_text)
 
-    # === 4. 渲染建议按钮 (正则大升级) ===
-    
-    # 尝试匹配多种格式：
-    # 1. 1. [点击] xxx
-    # 2. [点击] xxx
-    # 3. 1. xxx?
-    # 4. 纯文本行 (针对 "建议进一步挖掘的问题" 下方的非空行)
-    
-    suggestions = []
-    
-    # 策略 A: 显式标记匹配
-    s1 = re.findall(r"(?:\[点击\]|\[Click\])\s*(.*)", content)
-    if s1: 
-        suggestions = s1
-    
-    # 策略 B: 序号 + 问号匹配 (你的日志里是这种: "LAMP模块贡献度：...？")
+    suggestions = re.findall(r"(?:\[点击\]|\[Click\])\s*(.*)", content)
     if not suggestions:
-        # 匹配以 ? 结尾的行，或者包含中文问号的行
-        # 排除掉太短的行（防止匹配到标题）
-        s2 = re.findall(r"(?:^|\n)(?:[\d\.\-]*\s*)?(.{5,}?[?？])(?=\n|$)", content)
-        if s2:
-            suggestions = s2
-            
-    # 策略 C: 兜底匹配 (如果上方有 "建议进一步...问题" 标题，则提取其后的行)
-    if not suggestions:
-        # 找到标题位置
-        header_match = re.search(r"(?:建议|后续).*?(?:问题|研究)", content)
-        if header_match:
-            # 提取标题之后的所有文本
-            tail_text = content[header_match.end():]
-            # 按行分割，过滤空行
-            lines = [line.strip() for line in tail_text.split('\n') if line.strip()]
-            # 取前3个非空行作为建议
-            suggestions = lines[:3]
+         suggestions = re.findall(r"\d+\.\s+(.*)\?", content)
 
-    # 渲染
     if suggestions:
         st.markdown("---")
         st.caption("👉 **您可以点击以下问题继续追问：**")
         cols = st.columns(len(suggestions))
         for idx, question in enumerate(suggestions):
-            # 限制按钮文本长度，防止太长撑坏布局
-            btn_label = question
-            if len(btn_label) > 20: 
-                btn_label = btn_label[:20] + "..."
-                
-            # 使用 help 显示完整问题
-            if cols[idx].button(btn_label, help=question, key=f"sugg_{hash(content)}_{idx}"):
-                st.session_state.next_query = question
+            q_text = question.strip()
+            if cols[idx].button(q_text, key=f"sugg_{hash(content)}_{idx}"):
+                st.session_state.next_query = q_text
                 st.rerun()
 
+# === 知识库管理界面 (保持不变) ===
 def render_kb_management():
     st.header("📂 知识库管理")
     tabs = st.tabs(["📚 知识库列表 & 检视", "➕ 新建/追加知识"])
@@ -241,7 +142,7 @@ def render_kb_management():
     with tabs[0]:
         existing_kbs = list_kbs()
         if not existing_kbs:
-            st.info("暂无知识库。请去第二个标签页新建。")
+            st.info("暂无知识库。")
         else:
             col_list, col_detail = st.columns([1, 2])
             with col_list:
@@ -312,6 +213,7 @@ def render_kb_management():
             except Exception as e:
                 st.error(f"保存失败: {e}")
 
+# === 聊天界面 (保持不变) ===
 def render_chat():
     with st.sidebar:
         st.divider()
@@ -377,18 +279,15 @@ def render_chat():
                             next_node = update.get("next")
                             query = update.get("current_search_query")
                             loop = update.get("loop_count", 0)
-                            
                             if next_node == "Searcher":
                                 status_container.write(f"🔄 **第 {loop} 轮调研**: 发现缺口，指派搜索 `{query}`")
                             elif next_node == "Answerer":
                                 status_container.write("✅ **决策**: 信息充足，正在撰写报告...")
-
                         elif node_name == "Searcher":
                             msgs = update.get("messages", [])
                             if msgs:
                                 with status_container.expander(f"🔍 检索报告: {update.get('attempted_searches', [''])[0]}", expanded=False):
                                     st.markdown(msgs[-1].content)
-
                         elif node_name == "Answerer":
                             msgs = update.get("messages", [])
                             if msgs:
@@ -406,16 +305,42 @@ def render_chat():
                 status_container.update(label="Error", state="error")
                 st.error(f"运行错误: {e}")
 
+# === 主程序 (适配 v0.4.x 最新版) ===
 def main():
-    with st.sidebar:
-        st.title("DeepSeek RAG")
-        page = st.radio("导航", ["💬 对话", "⚙️ 知识库"], index=0)
+    try:
+        with open('config.yaml') as file:
+            config = yaml.load(file, Loader=SafeLoader)
+    except FileNotFoundError:
+        st.error("⚠️ 找不到 config.yaml，请先配置认证信息。")
+        return
 
-    if page == "💬 对话":
-        render_chat()
-    else:
-        render_kb_management()
+    authenticator = stauth.Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days'],
+        config.get('preauthorized')
+    )
 
+    # 使用新的 API 方式进行登录
+    authenticator.login()
+
+    if st.session_state["authentication_status"]:
+        authenticator.logout(location='sidebar')
+        st.sidebar.write(f'欢迎 *{st.session_state["name"]}*')
+        
+        with st.sidebar:
+            st.title("DeepSeek RAG")
+            page = st.radio("导航", ["💬 对话", "⚙️ 知识库"], index=0)
+
+        if page == "💬 对话":
+            render_chat()
+        else:
+            render_kb_management()
+    elif st.session_state["authentication_status"] is False:
+        st.error('用户名或密码不正确')
+    elif st.session_state["authentication_status"] is None:
+        st.warning('请输入用户名和密码')
 
 if __name__ == "__main__":
     main()

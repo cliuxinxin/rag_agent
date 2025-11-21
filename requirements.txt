@@ -11,3 +11,5 @@ python-dotenv
 requests
 jieba
 pydantic
+streamlit-authenticator==0.3.3
+PyYAML
