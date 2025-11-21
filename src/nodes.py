@@ -12,20 +12,6 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from src.state import AgentState
 
-# 引入 FlashRank
-try:
-    from flashrank import Ranker, RerankRequest
-    # 确保缓存目录存在
-    os.makedirs("opt", exist_ok=True)
-    reranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="opt")
-    USE_RERANKER = True
-except ImportError:
-    USE_RERANKER = False
-    print("未安装 flashrank，将跳过重排序步骤。")
-except Exception as e:
-    USE_RERANKER = False
-    print(f"FlashRank 初始化失败: {e}")
-
 def get_llm():
     return ChatOpenAI(
         model="deepseek-chat",
@@ -168,25 +154,8 @@ def search_node(state: AgentState) -> dict:
             "failed_topics": [query]
         }
 
-    # 重排序
-    if USE_RERANKER:
-        try:
-            passages = [
-                {"id": i, "text": doc.page_content, "meta": doc.metadata} 
-                for i, doc in enumerate(unique_docs_list)
-            ]
-            rerank_request = RerankRequest(query=query, passages=passages)
-            reranked_results = reranker.rank(rerank_request)
-            
-            final_docs = []
-            for item in reranked_results[:6]:
-                doc = Document(page_content=item['text'], metadata=item['meta'])
-                final_docs.append(doc)
-        except Exception as e:
-            print(f"Rerank Error: {e}")
-            final_docs = unique_docs_list[:6]
-    else:
-        final_docs = unique_docs_list[:6]
+    # 直接使用前6个文档
+    final_docs = unique_docs_list[:6]
 
     # 笔记生成
     context_text = "\n\n".join([f"[Ref {i+1}] {d.page_content}" for i, d in enumerate(final_docs)])

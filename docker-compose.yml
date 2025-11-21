@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  deepseek-rag:
+    build: .
+    container_name: deepseek_rag_pro
+    ports:
+      - "8501:8501"
+    volumes:
+      # 持久化知识库数据
+      - ./storage:/app/storage
+    env_file:
+      - .env
+    restart: unless-stopped
