@@ -43,6 +43,9 @@ def supervisor_node(state: AgentState) -> dict:
     messages = state["messages"]
     # 获取当前轮次，默认为0
     current_loop = state.get("loop_count", 0)
+    # === 获取记忆 ===
+    past_searches = state.get("attempted_searches", [])
+    failed_topics = state.get("failed_topics", [])
     # 设置最大搜索深度，建议 5-8 次
     MAX_LOOPS = 6 
 
@@ -60,8 +63,28 @@ def supervisor_node(state: AgentState) -> dict:
     parser = PydanticOutputParser(pydantic_object=RouteResponse)
     format_instructions = parser.get_format_instructions()
 
+    # === 构造记忆文本 ===
+    # 将列表格式化为字符串，放入 Prompt
+    if past_searches:
+        history_str = "\n".join([f"- {q}" for q in past_searches])
+    else:
+        history_str = "无 (这是第一次搜索)"
+        
+    # === 构造失败话题文本 ===
+    if failed_topics:
+        failed_str = "\n".join([f"- {q}" for q in failed_topics])
+        failed_section = f"""【❌ 已确认知识库中缺失的话题 (不要再搜！)】
+{failed_str}"""
+    else:
+        failed_section = "无"
+
     system_prompt = f"""你是一个全能型的研究项目主管。
     当前研究轮次：{current_loop + 1} / {MAX_LOOPS}。
+    
+    【🚫 已尝试的搜索路径 (绝对禁止重复语义)】
+    {history_str}
+    
+    {failed_section}
     
     【工作流程】
     1. **分析现状**：阅读历史搜索报告。用户问了什么？我们现在知道了什么？
@@ -72,6 +95,7 @@ def supervisor_node(state: AgentState) -> dict:
     3. **决策**：
        - 如果存在关键缺口，指派 'Searcher' 进行针对性挖掘。
        - 如果信息已足够形成一个逻辑严密的回答，或多次搜索无果，指派 'Answerer'。
+       - 如果缺口涉及【❌ 缺失话题】，请直接忽略该部分，不要再指派 Searcher 去搜这些死路。
     
     【重要】你还有 {MAX_LOOPS - current_loop} 次搜索机会。请珍惜次数，尽量精准。
     
@@ -93,7 +117,7 @@ def supervisor_node(state: AgentState) -> dict:
             observed_gap="Error", next="Answerer", search_query="", reasoning="System Error"
         )
 
-    print(f"\n🤔 [Supervisor Loop {current_loop + 1}]\n缺口: {decision.observed_gap}\n决定: {decision.next} -> {decision.search_query}\n")
+    print(f"\n🤔 [Supervisor Loop {current_loop + 1}]\n已搜过: {past_searches}\n失败话题: {failed_topics}\n决定: {decision.next} -> {decision.search_query}\n")
 
     return {
         "next": decision.next,
@@ -156,7 +180,13 @@ def search_node(state: AgentState) -> dict:
     final_docs = unique_docs[:6] # 稍微多给一点上下文
     
     if not final_docs:
-        return {"messages": [AIMessage(content=f"Searcher: 未找到关于 '{query}' 的相关信息。", name="Searcher")]}
+        return {
+            "messages": [AIMessage(content=f"Searcher: 未找到关于 '{query}' 的相关信息。", name="Searcher")],
+            # 即使没找到，也要记录“我搜过这个词了”，防止 Supervisor 又让搜一遍
+            "attempted_searches": [query],
+            # === 标记为失败话题 ===
+            "failed_topics": [query]
+        }
 
     # D. 信息萃取 (通用化)
     context_text = "\n\n".join([f"[Ref {i+1}] {d.page_content}" for i, d in enumerate(final_docs)])
@@ -172,13 +202,30 @@ def search_node(state: AgentState) -> dict:
     1. 保持客观，不要编造。
     2. 提取关键定义、数据、观点、时间线或因果关系。
     3. 如果资料包含矛盾信息，请一并列出。
+    4. 如果资料中完全没有与搜索任务相关的内容，请明确说明"未找到相关内容"。
     """
     
     extraction = llm.invoke([HumanMessage(content=filter_prompt)]).content
     
+    # === 新增：检查是否真的找到了相关内容 ===
+    # 如果LLM明确表示未找到相关内容，则标记为失败话题
+    is_empty_result = "未找到" in extraction or "没有找到" in extraction or "无相关" in extraction
+    
+    if is_empty_result:
+        return {
+            "messages": [AIMessage(content=f"【搜索报告】\n检索方向: {query}\n扩展词: {bm25_keywords}\n发现:\n{extraction}", name="Searcher")],
+            "attempted_searches": [query],
+            # === 标记为失败话题 ===
+            "failed_topics": [query]
+        }
+    
     return {
         "messages": [AIMessage(content=f"【搜索报告】\n检索方向: {query}\n扩展词: {bm25_keywords}\n发现:\n{extraction}", name="Searcher")],
-        "final_evidence": final_docs
+        "final_evidence": final_docs,
+        
+        # === 核心修改：将当前 Query 写入记忆 ===
+        # 由于 State 定义了 operator.add，这个列表会被追加到总列表中
+        "attempted_searches": [query]
     }
 
 # === 3. Answerer (通用内容创作者) ===

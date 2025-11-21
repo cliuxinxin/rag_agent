@@ -184,7 +184,11 @@ def render_chat():
             "current_search_query": "",
             "final_evidence": [],
             # 初始化计数器
-            "loop_count": 0
+            "loop_count": 0,
+            
+            # === 新增：初始化为空列表 ===
+            "attempted_searches": [],
+            "failed_topics": []
         }
 
         with st.chat_message("assistant"):
@@ -231,15 +235,19 @@ def render_chat():
                                 if hasattr(msg, 'content'):
                                     final_answer = msg.content
                                     status_container.write("✅ Answerer 已生成最终回答")
-                                    status_container.markdown(final_answer)
+                                    # 不再在这里显示最终回答，避免重复显示
+                                    # status_container.markdown(final_answer)
                         
                         # --- END ---
                         elif node_name == "__end__":
                             status_container.update(label="回答完成", state="complete", expanded=False)
                 
-                # 显示最终回答
+                # 显示最终回答 (修复重复显示问题)
                 if final_answer:
-                    st.markdown(final_answer)
+                    # 只在最终回答不为空且未在流中显示时才显示
+                    # 检查是否已经在 status_container 中显示过
+                    if final_answer not in [msg.get("content", "") for msg in st.session_state.messages]:
+                        st.markdown(final_answer)
                     st.session_state.messages.append({"role": "assistant", "content": final_answer})
                 else:
                     st.warning("未能生成回答，请检查日志。")

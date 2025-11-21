@@ -17,6 +17,12 @@ def add_documents(left: list, right: list):
             existing_contents.add(d.page_content)
     return left + new_docs
 
+# === 新增：简单的列表追加逻辑 ===
+def add_strings(left: list, right: list):
+    if left is None: left = []
+    if right is None: right = []
+    return left + right
+
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     next: str
@@ -34,3 +40,11 @@ class AgentState(TypedDict):
     
     # === 新增：循环计数器 ===
     loop_count: int
+    
+    # === 新增：已尝试的搜索路径记忆 ===
+    # 记录 Supervisor 曾经下达过的所有 search_query
+    attempted_searches: Annotated[List[str], add_strings]
+    
+    # === 新增：记录搜不到的话题 ===
+    # 记录明确搜索过但未找到内容的话题
+    failed_topics: Annotated[List[str], add_strings]
