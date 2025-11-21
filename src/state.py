@@ -48,3 +48,8 @@ class AgentState(TypedDict):
     # === 新增：记录搜不到的话题 ===
     # 记录明确搜索过但未找到内容的话题
     failed_topics: Annotated[List[str], add_strings]
+    
+    # === 新增：调查笔记本 ===
+    # 每一轮 Searcher 会把"这一轮我发现了什么重要信息"记在这里
+    # 格式建议： "Round 1 (Topic): Found X, Y, Z."
+    research_notes: Annotated[List[str], add_strings]

@@ -9,15 +9,25 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
 from src.state import AgentState
 
+# 引入 FlashRank (如果你之前装了)
+try:
+    from flashrank import Ranker, RerankRequest
+    # 使用轻量级模型
+    reranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="opt")
+    USE_RERANKER = True
+except ImportError:
+    USE_RERANKER = False
+    print("未安装 flashrank，将跳过重排序步骤。")
+
 def get_llm():
-    # 建议调高一点 temperature，让通用回答稍微灵活一点，但不要太高
     return ChatOpenAI(
         model="deepseek-chat",
         openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
         openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.deepseek.com"),
-        temperature=0.3, 
+        temperature=0.3,
         max_retries=2
     )
 
@@ -41,63 +51,53 @@ class RouteResponse(BaseModel):
 
 def supervisor_node(state: AgentState) -> dict:
     messages = state["messages"]
-    # 获取当前轮次，默认为0
     current_loop = state.get("loop_count", 0)
-    # === 获取记忆 ===
+    
+    # === 1. 优先获取状态值 ===
     past_searches = state.get("attempted_searches", [])
     failed_topics = state.get("failed_topics", [])
-    # 设置最大搜索深度，建议 5-8 次
+    
     MAX_LOOPS = 6 
-
     llm = get_llm()
     
-    # === 强制止损逻辑 ===
+    # === 2. 无论如何，先定义好字符串变量 ===
+    # 避免 "UnboundLocalError" 的关键：在使用前确保赋值
+    if past_searches:
+        history_str = "\n".join([f"- {q}" for q in past_searches])
+    else:
+        history_str = "无"
+
+    if failed_topics:
+        failed_str = "\n".join([f"- {q}" for q in failed_topics])
+    else:
+        failed_str = "无"
+
+    # === 3. 循环限制检查 ===
     if current_loop >= MAX_LOOPS:
-        print(f"🛑 达到最大循环次数 ({MAX_LOOPS})，强制转 Answerer。")
-        return {
-            "next": "Answerer",
-            "current_search_query": "",
-            "loop_count": current_loop  # 保持不变
-        }
+        return {"next": "Answerer", "current_search_query": "", "loop_count": current_loop}
 
     parser = PydanticOutputParser(pydantic_object=RouteResponse)
     format_instructions = parser.get_format_instructions()
 
-    # === 构造记忆文本 ===
-    # 将列表格式化为字符串，放入 Prompt
-    if past_searches:
-        history_str = "\n".join([f"- {q}" for q in past_searches])
-    else:
-        history_str = "无 (这是第一次搜索)"
-        
-    # === 构造失败话题文本 ===
-    if failed_topics:
-        failed_str = "\n".join([f"- {q}" for q in failed_topics])
-        failed_section = f"""【❌ 已确认知识库中缺失的话题 (不要再搜！)】
-{failed_str}"""
-    else:
-        failed_section = "无"
-
+    # === 4. 构造 Prompt (此时变量一定有值) ===
     system_prompt = f"""你是一个全能型的研究项目主管。
     当前研究轮次：{current_loop + 1} / {MAX_LOOPS}。
     
-    【🚫 已尝试的搜索路径 (绝对禁止重复语义)】
+    【已尝试的搜索】
     {history_str}
     
-    {failed_section}
+    【❌ 已确认无结果的话题 (不要重搜)】
+    {failed_str}
     
     【工作流程】
-    1. **分析现状**：阅读历史搜索报告。用户问了什么？我们现在知道了什么？
-    2. **识别缺口 (Gap Analysis)**：
-       - 是否还有未解释的**专有名词**？
-       - 是否只找到了A面，而忽略了**B面**（如只看了优点没看缺点）？
-       - 是否还需要具体的**数据/案例**来支撑论点？
-    3. **决策**：
-       - 如果存在关键缺口，指派 'Searcher' 进行针对性挖掘。
-       - 如果信息已足够形成一个逻辑严密的回答，或多次搜索无果，指派 'Answerer'。
-       - 如果缺口涉及【❌ 缺失话题】，请直接忽略该部分，不要再指派 Searcher 去搜这些死路。
-    
-    【重要】你还有 {MAX_LOOPS - current_loop} 次搜索机会。请珍惜次数，尽量精准。
+    1. 分析现状：我们知道了什么？
+    2. **识别缺口**：
+       - 如果用户问“这篇文章讲了什么/总结全文”，且我们还没搜过“摘要/目录”，这是巨大缺口。
+       - 如果是细节问题，检查是否缺少关键数据。
+    3. **智能决策**：
+       - 如果 Searcher 已经提供了推断的标题或核心信息，请不要再重复要求确认标题，直接基于该信息进行深入挖掘（如架构、实验结果）。
+       - 一旦识别出可能的论文标题或核心主题，立刻转向内容深挖，不要纠结于元数据（Metadata）的确认。
+    4. 决策：指派 Searcher 或 Answerer。
     
     {format_instructions}
     """
@@ -109,20 +109,19 @@ def supervisor_node(state: AgentState) -> dict:
             content = content.replace("```json", "").replace("```", "")
         elif content.startswith("```"):
             content = content.replace("```", "")
-        
         decision = parser.parse(content)
     except Exception as e:
         print(f"Supervisor Error: {e}")
+        # 兜底
         decision = RouteResponse(
             observed_gap="Error", next="Answerer", search_query="", reasoning="System Error"
         )
 
-    print(f"\n🤔 [Supervisor Loop {current_loop + 1}]\n已搜过: {past_searches}\n失败话题: {failed_topics}\n决定: {decision.next} -> {decision.search_query}\n")
+    print(f"\n🤔 [Supervisor Loop {current_loop + 1}]\n决定: {decision.next} -> {decision.search_query}\n")
 
     return {
         "next": decision.next,
         "current_search_query": decision.search_query,
-        # 每次经过 Supervisor，计数器 +1
         "loop_count": current_loop + 1
     }
 
@@ -138,94 +137,90 @@ def search_node(state: AgentState) -> dict:
 
     llm = get_llm()
 
-    # A. 关键词泛化 (Keyword Expansion)
-    # 不再强制加 "root cause"，而是根据语义扩展
-    expansion_prompt = f"""你是一个搜索专家。请针对搜索意图 "{query}"，生成 2-3 个用于关键词检索的扩展词。
-    策略：
-    1. 提取核心实体（Entity）。
-    2. 补充同义词、专业术语或英文翻译。
-    3. 如果是特定领域（如法律、医疗），加入相关限定词。
+    # === 1. 关键词扩展 (针对概括性问题优化) ===
+    expansion_prompt = f"""你是一个搜索专家。请针对搜索意图 "{query}"，生成 3-4 个用于关键词检索的扩展词。
     
-    只输出关键词，用空格分隔。"""
+    【特殊策略】：
+    - **概括性问题**：如果用户问“这篇文章讲了什么”、“总结”、“主要内容”，请务必包含：
+      "Abstract", "Introduction", "Conclusion", "Summary", "Table of Contents", "Overview", "摘要", "结论", "目录"。
+    - **细节问题**：提取核心实体、同义词、专业术语。
+    
+    只输出关键词字符串，用空格分隔。不要解释。"""
     
     bm25_keywords = llm.invoke([HumanMessage(content=expansion_prompt)]).content.strip().replace('"', '')
     
     results_bm25 = []
     results_vector = []
 
-    # B. 混合检索执行
+    # 2. 检索 (稍微扩大召回，防止漏掉首尾)
     if source_docs:
         try:
             bm25_retriever = BM25Retriever.from_documents(source_docs)
-            bm25_retriever.k = 3
-            # 组合查询：自然语言 + 扩展关键词
+            bm25_retriever.k = 10 
             results_bm25 = bm25_retriever.invoke(f"{query} {bm25_keywords}")
         except: pass
     
     if vector_store:
         try:
-            vector_retriever = vector_store.as_retriever(search_kwargs={"k": 4}) # 向量多取一点
+            vector_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
             results_vector = vector_retriever.invoke(query)
         except: pass
 
-    # C. 结果合并与去重
+    # 3. 合并去重
     all_results = results_vector + results_bm25
-    unique_docs = []
-    seen = set()
+    unique_docs = {}
     for doc in all_results:
-        if doc.page_content not in seen:
-            unique_docs.append(doc)
-            seen.add(doc.page_content)
-    
-    final_docs = unique_docs[:6] # 稍微多给一点上下文
-    
-    if not final_docs:
+        if doc.page_content not in unique_docs:
+            unique_docs[doc.page_content] = doc
+    unique_docs_list = list(unique_docs.values())
+
+    if not unique_docs_list:
         return {
-            "messages": [AIMessage(content=f"Searcher: 未找到关于 '{query}' 的相关信息。", name="Searcher")],
-            # 即使没找到，也要记录“我搜过这个词了”，防止 Supervisor 又让搜一遍
+            "messages": [AIMessage(content=f"Searcher: 未找到相关信息。", name="Searcher")],
             "attempted_searches": [query],
-            # === 标记为失败话题 ===
             "failed_topics": [query]
         }
 
-    # D. 信息萃取 (通用化)
+    # 4. 重排序 (Rerank)
+    if USE_RERANKER:
+        try:
+            passages = [
+                {"id": i, "text": doc.page_content, "meta": doc.metadata} 
+                for i, doc in enumerate(unique_docs_list)
+            ]
+            rerank_request = RerankRequest(query=query, passages=passages)
+            reranked_results = reranker.rank(rerank_request)
+            
+            final_docs = []
+            for item in reranked_results[:6]: # 取前6个
+                doc = Document(page_content=item['text'], metadata=item['meta'])
+                final_docs.append(doc)
+        except Exception as e:
+            print(f"Rerank Error: {e}")
+            final_docs = unique_docs_list[:6]
+    else:
+        final_docs = unique_docs_list[:6]
+
+    # 5. 信息萃取 (笔记生成)
     context_text = "\n\n".join([f"[Ref {i+1}] {d.page_content}" for i, d in enumerate(final_docs)])
     
-    filter_prompt = f"""你是一个客观的情报分析员。
-    
-    【搜索任务】: "{query}"
-    【检索资料】:
+    filter_prompt = f"""你是一个情报分析员。
+    任务: "{query}"
+    资料:
     {context_text}
     
-    请从资料中提取与任务相关的信息。
-    要求：
-    1. 保持客观，不要编造。
-    2. 提取关键定义、数据、观点、时间线或因果关系。
-    3. 如果资料包含矛盾信息，请一并列出。
-    4. 如果资料中完全没有与搜索任务相关的内容，请明确说明"未找到相关内容"。
+    请提取关键信息（定义、数据、核心观点）。
+    如果是概括性问题，请重点提取文章结构、主要结论。
     """
-    
     extraction = llm.invoke([HumanMessage(content=filter_prompt)]).content
     
-    # === 新增：检查是否真的找到了相关内容 ===
-    # 如果LLM明确表示未找到相关内容，则标记为失败话题
-    is_empty_result = "未找到" in extraction or "没有找到" in extraction or "无相关" in extraction
-    
-    if is_empty_result:
-        return {
-            "messages": [AIMessage(content=f"【搜索报告】\n检索方向: {query}\n扩展词: {bm25_keywords}\n发现:\n{extraction}", name="Searcher")],
-            "attempted_searches": [query],
-            # === 标记为失败话题 ===
-            "failed_topics": [query]
-        }
-    
+    current_note = f"### 🔍 搜索主题: {query} (关键词: {bm25_keywords})\n{extraction}\n"
+
     return {
-        "messages": [AIMessage(content=f"【搜索报告】\n检索方向: {query}\n扩展词: {bm25_keywords}\n发现:\n{extraction}", name="Searcher")],
+        "messages": [AIMessage(content=f"【搜索报告】\n方向: {query}\n发现:\n{extraction}", name="Searcher")],
         "final_evidence": final_docs,
-        
-        # === 核心修改：将当前 Query 写入记忆 ===
-        # 由于 State 定义了 operator.add，这个列表会被追加到总列表中
-        "attempted_searches": [query]
+        "attempted_searches": [query],
+        "research_notes": [current_note]
     }
 
 # === 3. Answerer (通用内容创作者) ===
@@ -233,30 +228,46 @@ def search_node(state: AgentState) -> dict:
 def answer_node(state: AgentState) -> dict:
     messages = state["messages"]
     evidences = state.get("final_evidence", [])
+    notes = state.get("research_notes", [])
     
     llm = get_llm()
     
+    # 1. 构造笔记本内容
+    notes_text = ""
+    if notes:
+        notes_text = "【🕵️‍♂️ 调查笔记】\n" + "\n".join(notes)
+    else:
+        notes_text = "无调查记录。"
+    
+    # 2. 构造原始证据
     evidence_text = ""
     if evidences:
-        evidence_text = "【原始知识库片段】\n"
+        evidence_text = "【📚 原始片段】\n"
         for i, doc in enumerate(evidences):
-            content_preview = doc.page_content.replace('\n', ' ')[:300] # 限制长度防止 token 溢出
-            evidence_text += f"> [Ref {i+1}] ...{content_preview}...\n(Source: {doc.metadata.get('source', 'Unknown')})\n\n"
-    else:
-        evidence_text = "【原始知识库片段】: 无\n"
-        
-    system_prompt = f"""你是一个专业的知识整合专家。
+            content_preview = doc.page_content.replace('\n', ' ')[:200]
+            evidence_text += f"> [Ref {i+1}] {content_preview}...\n"
     
-    请基于【AI回答历史】和【原始知识库片段】回答用户问题。
+    system_prompt = f"""你是一个专业的知识库助手。
+    请基于【调查笔记】和【原始片段】回答用户问题。
+    
+    {notes_text}
     
     {evidence_text}
     
-    【输出结构要求】
-    1. **深度回答**：详细回答用户问题，引用 [Ref X] 佐证。
-    2. **结论**：一句话总结核心观点。
-    3. **🧐 建议进一步研究的问题**：
-       - 基于现有的回答，生成 3 个用户可能感兴趣的**深层问题**。
-       - 这些问题应该能引导用户挖掘文档中尚未充分展开的细节。
+    【撰写要求】
+    1. **结构清晰**：核心结论 -> 过程综述 -> 详细分析。
+    2. **概括能力**：如果用户问“讲了什么”，请串联各个片段的要点，形成连贯的摘要，而不是碎片化的列举。
+    3. **严谨引用**：引用 [Ref X]。
+    4. **⚖️ 盲点与局限**：诚实列出未找到的信息。
+    
+    5. **🧐 建议进一步挖掘的问题 (Strictly 3 Questions)**：
+       - 请生成 **恰好 3 个** 后续问题。
+       - **关键约束**：这些问题必须是**基于当前知识库内容**的延伸。
+       - **禁止**：不要问需要去公网搜索才能回答的问题（如“未来的发展趋势”、“最新新闻”），除非知识库里提到了。
+       - 格式：
+         1. [点击] 问题内容
+         2. [点击] 问题内容
+         3. [点击] 问题内容
     """
     
     response = llm.invoke([SystemMessage(content=system_prompt)] + messages)
