@@ -3,7 +3,10 @@ import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
 
-DB_PATH = "chat_history.db"
+# === 修改核心：将路径指向 storage 目录 ===
+STORAGE_DIR = Path("storage")
+STORAGE_DIR.mkdir(exist_ok=True) # 确保目录存在
+DB_PATH = STORAGE_DIR / "chat_history.db"
 
 def init_db():
     """初始化数据库表结构"""
