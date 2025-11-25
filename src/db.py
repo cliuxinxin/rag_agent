@@ -2,6 +2,8 @@ import sqlite3
 import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
+from pathlib import Path
+
 
 # === 修改核心：将路径指向 storage 目录 ===
 STORAGE_DIR = Path("storage")
