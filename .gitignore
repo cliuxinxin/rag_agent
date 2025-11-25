@@ -210,3 +210,4 @@ storage/
 all_python_files.txt
 .langgraph_api
 
+chat_history.db

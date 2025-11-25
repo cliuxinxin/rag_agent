@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # 添加 src 路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -16,13 +16,26 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.graph import graph
 from src.utils import load_file, split_documents
 from src.storage import save_kb, load_kbs, list_kbs, delete_kb, get_kb_details
+# 引入数据库模块
+from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
+# 引入 LLM 获取函数用于生成标题
+from src.nodes import get_llm
 
 load_dotenv()
-st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide")
+st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide", page_icon="🕵️‍♂️")
 
-# === 全局 CSS 样式 (保持不变) ===
+# 初始化数据库
+init_db()
+
+# === 全局 CSS 样式优化 ===
 st.markdown("""
 <style>
+    /* 全局字体优化 */
+    .stApp {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    
+    /* 引用 tooltip 样式 */
     .ref-container {
         position: relative;
         display: inline-block;
@@ -68,18 +81,84 @@ st.markdown("""
         border-style: solid;
         border-color: #ffffff transparent transparent transparent;
     }
+
+    /* === 侧边栏样式重构 === */
+    
+    /* 隐藏 Streamlit 默认的 deploy 按钮 */
+    .stDeployButton {display: none;}
+    
+    /* 侧边栏按钮基础样式 */
+    section[data-testid="stSidebar"] button {
+        border: none !important;
+        text-align: left !important;
+        transition: background-color 0.2s;
+        padding-left: 10px !important;
+    }
+    
+    /* 历史记录按钮样式 (非活跃) */
+    div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
+        background-color: transparent !important;
+        color: #555 !important;
+    }
+    div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] button[kind="secondary"]:hover {
+        background-color: #f0f2f6 !important;
+        color: #000 !important;
+    }
+
+    /* 删除按钮微调 */
+    div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] button[help="删除此对话"] {
+        color: #999 !important;
+        padding: 0px !important;
+        text-align: center !important;
+    }
+    div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] button[help="删除此对话"]:hover {
+        color: #ff4b4b !important;
+        background-color: #ffeaea !important;
+    }
+
+    /* 新建对话按钮 */
+    .new-chat-btn button {
+        border: 1px solid #e0e0e0 !important;
+        text-align: center !important;
+        background-color: white !important;
+    }
+    
 </style>
 """, unsafe_allow_html=True)
 
 # === 初始化 Session State ===
-for key in ["messages", "selected_kbs", "next_query", "attempted_searches", "research_notes", "failed_topics"]:
+if "current_session_id" not in st.session_state:
+    st.session_state.current_session_id = None
+
+for key in ["selected_kbs", "next_query", "attempted_searches", "research_notes", "failed_topics"]:
     if key not in st.session_state:
-        if key == "messages": st.session_state[key] = []
-        elif key == "next_query": st.session_state[key] = ""
+        if key == "next_query": st.session_state[key] = ""
         else: st.session_state[key] = []
 
-# === 格式化函数 (保持不变) ===
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# === 辅助功能 ===
+
+def generate_smart_title(query, answer):
+    """使用 LLM 生成简短的会话标题"""
+    try:
+        llm = get_llm()
+        prompt = f"""
+        请根据以下对话内容，生成一个非常简短的标题（5-10个字以内），用于历史记录列表。
+        不要使用引号，直接输出标题文本。
+        
+        用户: {query[:200]}
+        AI: {answer[:200]}
+        """
+        response = llm.invoke([SystemMessage(content=prompt)])
+        title = response.content.strip().replace('"', '').replace('《', '').replace('》', '')
+        return title if len(title) < 15 else title[:15]
+    except:
+        return query[:10] + "..."
+
 def format_display_message(content):
+    # (保持原有的格式化代码不变)
     split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】"]
     split_index = -1
     for marker in split_markers:
@@ -213,16 +292,81 @@ def render_kb_management():
             except Exception as e:
                 st.error(f"保存失败: {e}")
 
-# === 聊天界面 (保持不变) ===
+# === 侧边栏历史记录管理 (UI 优化版) ===
+def render_history_sidebar():
+    st.markdown("### 💬 对话历史")
+    
+    # 新建对话按钮
+    with st.container():
+        st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
+        if st.button("➕ 开启新对话", use_container_width=True, type="primary"):
+            new_id = create_session()
+            st.session_state.current_session_id = new_id
+            st.session_state.messages = []
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    
+    sessions = get_all_sessions()
+    
+    # 自动加载逻辑
+    if st.session_state.current_session_id is None:
+        if sessions:
+            st.session_state.current_session_id = sessions[0]['id']
+            st.session_state.messages = get_messages(sessions[0]['id'])
+        else:
+            new_id = create_session()
+            st.session_state.current_session_id = new_id
+            st.session_state.messages = []
+    
+    # 渲染列表
+    scroll_container = st.container(height=500, border=False)
+    with scroll_container:
+        for s in sessions:
+            is_selected = (s['id'] == st.session_state.current_session_id)
+            
+            # 使用列布局：左边是标题按钮，右边是删除按钮
+            col1, col2 = st.columns([5, 1])
+            
+            with col1:
+                # 选中的会话使用 primary 样式，其他的用 secondary (CSS 会处理成透明背景)
+                btn_type = "primary" if is_selected else "secondary"
+                icon = "📂" if is_selected else "🗨️"
+                
+                if st.button(f"{icon} {s['title']}", key=f"sess_{s['id']}", use_container_width=True, type=btn_type):
+                    st.session_state.current_session_id = s['id']
+                    st.session_state.messages = get_messages(s['id'])
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️", key=f"del_{s['id']}", help="删除此对话"):
+                    delete_session(s['id'])
+                    # 如果删除的是当前会话，重置
+                    if st.session_state.current_session_id == s['id']:
+                        st.session_state.current_session_id = None
+                        st.session_state.messages = []
+                    st.rerun()
+
+# === 聊天界面 ===
 def render_chat():
     with st.sidebar:
-        st.divider()
         st.subheader("🧠 知识库选择")
         all_kbs = list_kbs()
         selected_kbs = st.multiselect("选择知识库", all_kbs, default=all_kbs[0] if all_kbs else None)
         st.session_state.selected_kbs = selected_kbs
+        
+        # 渲染历史记录
+        render_history_sidebar()
 
     st.header("💬 DeepSeek Research Agent")
+
+    # 显示当前会话标题
+    if st.session_state.current_session_id:
+        sessions = get_all_sessions()
+        current_session = next((s for s in sessions if s['id'] == st.session_state.current_session_id), None)
+        if current_session:
+            st.subheader(f"当前会话: {current_session['title']}")
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
@@ -251,6 +395,10 @@ def render_chat():
             source_documents, vector_store = load_kbs(st.session_state.selected_kbs)
 
         st.session_state.messages.append({"role": "user", "content": final_query})
+        # 保存用户消息到数据库
+        if st.session_state.current_session_id:
+            add_message(st.session_state.current_session_id, "user", final_query)
+        
         with st.chat_message("user"):
             st.markdown(final_query)
 
@@ -298,6 +446,17 @@ def render_chat():
                 if final_answer:
                     # 保存到历史
                     st.session_state.messages.append({"role": "assistant", "content": final_answer})
+                    # 保存助手消息到数据库
+                    if st.session_state.current_session_id:
+                        add_message(st.session_state.current_session_id, "assistant", final_answer)
+                    
+                    # 生成智能标题（仅在第一轮对话后）
+                    if st.session_state.current_session_id and len(st.session_state.messages) == 2:
+                        smart_title = generate_smart_title(final_query, final_answer)
+                        update_session_title(st.session_state.current_session_id, smart_title)
+                        # 更新界面显示
+                        st.rerun()
+                    
                     # 渲染当前回答 (使用优化后的格式化函数)
                     format_display_message(final_answer)
 
