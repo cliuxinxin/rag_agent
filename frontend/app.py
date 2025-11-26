@@ -294,7 +294,7 @@ def render_kb_management():
 
 # === 侧边栏历史记录管理 (UI 优化版) ===
 def render_history_sidebar():
-    st.markdown("### 💬 对话历史")
+    st.markdown("### 💬 聊天历史")
     
     # 新建对话按钮
     with st.container():
