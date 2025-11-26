@@ -1,0 +1,28 @@
+name: Deploy to Oracle Server
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 执行远程部署
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}       # 对应你填的 Oracle 公网 IP
+          username: ${{ secrets.USERNAME }}   # 对应 opc 或 ubuntu
+          key: ${{ secrets.KEY }}         # 对应刚才 cat id_rsa 复制的内容
+          script: |
+            # 停止旧容器 (防止端口占用冲突)
+            cd /home/${{ secrets.USERNAME }}/rag_agent # ⚠️注意：请确认你的项目路径是否正确
+            
+            # 这一步很重要：拉取代码并更新
+            git pull origin main
+            
+            # 重新构建并启动
+            docker-compose up -d --build
+            
+            # 清理垃圾镜像
+            docker image prune -f
