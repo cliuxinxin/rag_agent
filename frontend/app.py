@@ -5,7 +5,6 @@ import re
 import html
 import yaml
 import streamlit as st
-import streamlit.components.v1 as components  # 添加 components 导入
 import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 from dotenv import load_dotenv
@@ -148,22 +147,6 @@ if "messages" not in st.session_state:
 
 # === 辅助功能 ===
 
-# === Mermaid 渲染辅助函数 ===
-def render_mermaid(code: str, height=300):
-    """
-    使用 CDN 加载 Mermaid.js 并渲染图表
-    """
-    html_code = f"""
-    <div class="mermaid">
-    {code}
-    </div>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({{ startOnLoad: true }});
-    </script>
-    """
-    components.html(html_code, height=height, scrolling=True)
-
 def generate_smart_title(query, answer):
     """使用 LLM 生成简短的会话标题"""
     try:
@@ -182,7 +165,6 @@ def generate_smart_title(query, answer):
         return query[:10] + "..."
 
 def format_display_message(content):
-    # (保持原有的格式化代码不变)
     split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】"]
     split_index = -1
     for marker in split_markers:
@@ -409,22 +391,13 @@ def render_deep_read_mode():
     # === 5. 结果展示 ===
     if st.session_state.deep_state == "done" and st.session_state.final_report:
         st.divider()
+        st.subheader("📝 深度解读报告")
         
-        # 渲染 Mermaid 和 Markdown
-        report_content = st.session_state.final_report
+        # 直接显示报告，不需要任何复杂的解析
+        st.markdown(st.session_state.final_report)
         
-        if "```mermaid" in report_content:
-            parts = report_content.split("```mermaid")
-            st.markdown(parts[0])
-            mermaid_part = parts[1].split("```")[0]
-            st.caption("📊 架构数据流向图")
-            render_mermaid(mermaid_part, height=400)
-            if len(parts[1].split("```")) > 1:
-                st.markdown("``".join(parts[1].split("```")[1:]))
-        else:
-            st.markdown(report_content)
-        
-        if st.button("🔙 返回"):
+        st.divider()
+        if st.button("🔙 返回首页"):
             st.session_state.deep_state = "idle"
             st.rerun()
 
