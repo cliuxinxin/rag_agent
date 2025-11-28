@@ -36,6 +36,17 @@ def init_db():
     )
     ''')
 
+    # === 新增：深度解读报告表 ===
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS research_reports (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        source_name TEXT, -- 文件名或 "Text Input"
+        content TEXT,     -- 最终的 Markdown 报告
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -96,3 +107,49 @@ def get_messages(session_id: str) -> List[Dict]:
     rows = c.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+# === 新增：报告管理函数 ===
+
+def save_report(title: str, source_name: str, content: str) -> str:
+    """保存一份新的深度解读报告"""
+    report_id = str(uuid.uuid4())
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    
+    # 如果标题太长，截断一下
+    if len(title) > 50: title = title[:50] + "..."
+        
+    c.execute(
+        "INSERT INTO research_reports (id, title, source_name, content) VALUES (?, ?, ?, ?)",
+        (report_id, title, source_name, content)
+    )
+    conn.commit()
+    conn.close()
+    return report_id
+
+def get_all_reports() -> List[Dict]:
+    """获取所有报告列表（按时间倒序）"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT id, title, source_name, created_at FROM research_reports ORDER BY created_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_report_content(report_id: str) -> Optional[Dict]:
+    """获取特定报告的详细内容"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM research_reports WHERE id = ?", (report_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_report(report_id: str):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("DELETE FROM research_reports WHERE id = ?", (report_id,))
+    conn.commit()
+    conn.close()

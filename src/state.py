@@ -24,8 +24,20 @@ def add_strings(left: list, right: list):
     return left + right
 
 class AgentState(TypedDict):
+    # === 基础字段 ===
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    next: str
+    
+    # === 深度解读专用字段 ===
+    full_content: str        # <--- 核心：存储文档全文，用于 Context Caching
+    doc_title: str           # 文档标题（文件名）
+    
+    next: str                # 下一步是谁
+    loop_count: int          # 轮次计数
+    
+    current_question: str    # Planner 提出的当前问题
+    qa_pairs: Annotated[List[str], add_strings] # 积累的问答对
+    
+    final_report: str        # 最终产出
     
     # 原始知识库
     source_documents: List[Document]
@@ -39,7 +51,7 @@ class AgentState(TypedDict):
     final_evidence: Annotated[List[Document], add_documents]
     
     # === 新增：循环计数器 ===
-    loop_count: int
+    # loop_count: int  # 已移到深度解读专用字段
     
     # === 新增：已尝试的搜索路径记忆 ===
     # 记录 Supervisor 曾经下达过的所有 search_query

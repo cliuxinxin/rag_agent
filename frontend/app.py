@@ -18,8 +18,15 @@ from src.utils import load_file, split_documents
 from src.storage import save_kb, load_kbs, list_kbs, delete_kb, get_kb_details
 # 引入数据库模块
 from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
+# 引入数据库新函数
+from src.db import save_report, get_all_reports, get_report_content, delete_report
 # 引入 LLM 获取函数用于生成标题
 from src.nodes import get_llm
+# 引入深度解读模块
+from src.deep_flow import deep_graph
+# 引入 TextLoader 和 PyPDFLoader 仅用于提取文本，不做切片
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+import tempfile
 
 load_dotenv()
 st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide", page_icon="🕵️‍♂️")
@@ -213,6 +220,197 @@ def format_display_message(content):
                 st.session_state.next_query = q_text
                 st.rerun()
 
+# === 辅助函数：只读文本，不切片 ===
+def load_file_content(uploaded_file) -> str:
+    """直接读取文件全文内容"""
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    full_text = ""
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+
+    try:
+        if file_ext == "pdf":
+            loader = PyPDFLoader(tmp_path)
+            pages = loader.load()
+            full_text = "\n\n".join([p.page_content for p in pages])
+        else:
+            # 假设是 txt
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                full_text = f.read()
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+            
+    return full_text
+
+# === 渲染深度模式 ===
+def render_deep_read_mode():
+    st.header("🧠 全文深度解读 (Full Context)")
+    
+    # === 1. 侧边栏：历史报告 ===
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("📜 历史报告")
+        history_reports = get_all_reports()
+        
+        if not history_reports:
+            st.caption("暂无历史记录")
+        
+        for rep in history_reports:
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                # 点击标题加载报告
+                if st.button(f"📄 {rep['title']}", key=f"hist_{rep['id']}", help=f"来源: {rep['source_name']}"):
+                    full_data = get_report_content(rep['id'])
+                    if full_data:
+                        st.session_state.deep_state = "done"
+                        st.session_state.final_report = full_data['content']
+                        st.rerun()
+            with col2:
+                # 删除按钮
+                if st.button("🗑️", key=f"del_rep_{rep['id']}", help="删除此记录"):
+                    delete_report(rep['id'])
+                    st.rerun()
+
+    # === 2. 主界面：输入方式选择 (Tab) ===
+    input_tabs = st.tabs(["📁 上传文件", "📝 粘贴文本"])
+    
+    target_content = None
+    source_name = "Unknown"
+    
+    with input_tabs[0]:
+        uploaded_file = st.file_uploader("上传 PDF 或 TXT 文档", type=["pdf", "txt"], key="deep_upload")
+        if uploaded_file:
+            source_name = uploaded_file.name
+
+    with input_tabs[1]:
+        text_input = st.text_area("直接粘贴文本内容", height=300, placeholder="在此处粘贴论文全文、合同或长文章...")
+        if text_input:
+            source_name = "Text Input"
+            # 简单的标题提取：取前20个字
+            if len(text_input) > 0:
+                clean_title = text_input[:30].replace("\n", " ").strip()
+                source_name = f"文本: {clean_title}..."
+
+    # 确定输入源
+    start_disabled = True
+    if uploaded_file or (text_input and len(text_input.strip()) > 50):
+        start_disabled = False
+
+    if "deep_state" not in st.session_state:
+        st.session_state.deep_state = "idle"
+
+    # === 3. 开始按钮 ===
+    if st.button("🚀 开始深度解读", type="primary", disabled=start_disabled):
+        st.session_state.deep_state = "running"
+        st.session_state.deep_logs = []
+        st.session_state.final_report = ""
+        
+        # 提取文本内容
+        full_text_content = ""
+        with st.spinner("正在提取并缓存全文..."):
+            if uploaded_file:
+                # 复用之前的 load_file_content 函数
+                full_text_content = load_file_content(uploaded_file)
+            elif text_input:
+                full_text_content = text_input
+        
+        if not full_text_content:
+            st.error("内容为空，无法处理。")
+            return
+
+        # 初始化图状态
+        initial_input = {
+            "messages": [],
+            "full_content": full_text_content,
+            "doc_title": source_name,
+            "next": "Planner",
+            "loop_count": 0,
+            "qa_pairs": [],
+            "current_question": "",
+            "final_report": ""
+        }
+        st.session_state.deep_input = initial_input
+        st.rerun()
+
+    # === 4. 运行状态显示 ===
+    if st.session_state.deep_state == "running":
+        status_box = st.status("🕵️‍♂️ DeepSeek 深度思考中...", expanded=True)
+        final_report = ""
+        
+        try:
+            for step in deep_graph.stream(st.session_state.deep_input, config={"recursion_limit": 50}):
+                for node, update in step.items():
+                    if node == "Planner":
+                        question = update.get("current_question")
+                        if question:
+                            status_box.write(f"🤔 **Planner**: 发现盲点，正在追问：`{question}`")
+                        else:
+                            status_box.write("✅ **Planner**: 核心信息收集完毕，转交 Writer 撰写初稿...")
+                            
+                    elif node == "Researcher":
+                        qa_pairs = update.get("qa_pairs", [])
+                        if qa_pairs:
+                            latest_qa = qa_pairs[-1]
+                            try:
+                                q_part = latest_qa.split("**A**:")[0].replace("❓ **Q**:", "").strip()
+                                a_part = latest_qa.split("**A**:")[1].strip()
+                            except:
+                                q_part = "细节查询"
+                                a_part = latest_qa
+                            
+                            with status_box.expander(f"📚 Researcher 已调研: {q_part[:30]}...", expanded=False):
+                                st.markdown(a_part)
+                    
+                    elif node == "Writer":
+                        status_box.write("✍️ **Writer**: 正在撰写《深度解读报告》主体部分...")
+                        final_report = update.get("final_report")
+                    
+                    elif node == "Outlooker":
+                        status_box.write("🔭 **Outlooker**: 正在分析扩展研究方向与行动指南...")
+                        final_report = update.get("final_report") # 获取追加后的完整报告
+
+            status_box.update(label="解读完成！已自动保存。", state="complete", expanded=False)
+            st.session_state.final_report = final_report
+            st.session_state.deep_state = "done"
+            
+            # === 自动保存到数据库 ===
+            # 生成一个简短标题，例如 "解读: {原文件名}"
+            doc_title = st.session_state.deep_input.get("doc_title", "未命名文档")
+            report_title = f"解读: {doc_title}"
+            save_report(report_title, doc_title, final_report)
+            st.toast("✅ 报告已保存至历史记录")
+            
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"运行出错: {e}")
+            st.session_state.deep_state = "idle"
+
+    # === 5. 结果展示 ===
+    if st.session_state.deep_state == "done" and st.session_state.final_report:
+        st.divider()
+        
+        # 渲染 Mermaid 和 Markdown
+        report_content = st.session_state.final_report
+        
+        if "```mermaid" in report_content:
+            parts = report_content.split("```mermaid")
+            st.markdown(parts[0])
+            mermaid_part = parts[1].split("```")[0]
+            st.caption("📊 架构数据流向图")
+            render_mermaid(mermaid_part, height=400)
+            if len(parts[1].split("```")) > 1:
+                st.markdown("``".join(parts[1].split("```")[1:]))
+        else:
+            st.markdown(report_content)
+        
+        if st.button("🔙 返回"):
+            st.session_state.deep_state = "idle"
+            st.rerun()
+
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
     st.header("📂 知识库管理")
@@ -248,7 +446,7 @@ def render_kb_management():
                             st.text(item['content'])
                 else:
                     st.write("该知识库为空或无法读取。")
-
+    
     with tabs[1]:
         st.subheader("上传文档")
         kb_action = st.radio("模式", ["追加到现有", "新建知识库"], horizontal=True)
@@ -261,14 +459,14 @@ def render_kb_management():
         else:
             target_kb_name = st.text_input("新库名称 (英文/数字)", placeholder="kb_v1")
         kb_language = st.selectbox("文档主要语言", ["Chinese", "English"], index=0)
-
+        
         upload_mode = st.tabs(["📁 上传文件", "📝 粘贴文本"])
         raw_docs = []
         with upload_mode[0]:
             uploaded_files = st.file_uploader("支持 PDF/TXT", type=["pdf", "txt"], accept_multiple_files=True)
         with upload_mode[1]:
             text_input = st.text_area("输入文本", height=150)
-
+        
         if st.button("💾 开始处理并保存", use_container_width=True):
             if not target_kb_name:
                 st.error("请输入名称")
@@ -305,7 +503,7 @@ def render_history_sidebar():
             st.session_state.messages = []
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-
+    
     st.markdown("---")
     
     sessions = get_all_sessions()
@@ -358,26 +556,26 @@ def render_chat():
         
         # 渲染历史记录
         render_history_sidebar()
-
+    
     st.header("💬 DeepSeek Research Agent")
-
+    
     # 显示当前会话标题
     if st.session_state.current_session_id:
         sessions = get_all_sessions()
         current_session = next((s for s in sessions if s['id'] == st.session_state.current_session_id), None)
         if current_session:
             st.subheader(f"当前会话: {current_session['title']}")
-
+    
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant":
                 format_display_message(msg["content"])
             else:
                 st.markdown(msg["content"])
-
+    
     preset_query = st.session_state.next_query
     user_input = st.chat_input("请输入问题...")
-
+    
     final_query = None
     if user_input:
         final_query = user_input
@@ -385,15 +583,15 @@ def render_chat():
     elif preset_query:
         final_query = preset_query
         st.session_state.next_query = ""
-
+    
     if final_query:
         if not st.session_state.selected_kbs:
             st.error("请选择知识库！")
             return
-
+        
         with st.spinner("加载索引..."):
             source_documents, vector_store = load_kbs(st.session_state.selected_kbs)
-
+        
         st.session_state.messages.append({"role": "user", "content": final_query})
         # 保存用户消息到数据库
         if st.session_state.current_session_id:
@@ -401,7 +599,7 @@ def render_chat():
         
         with st.chat_message("user"):
             st.markdown(final_query)
-
+        
         initial_state = {
             "messages": [HumanMessage(content=final_query)],
             "source_documents": source_documents,
@@ -412,13 +610,19 @@ def render_chat():
             "loop_count": 0,
             "attempted_searches": [],
             "research_notes": [],
-            "failed_topics": []
+            "failed_topics": [],
+            # 深度解读专用字段（设置默认值）
+            "full_content": "",
+            "doc_title": "",
+            "current_question": "",
+            "qa_pairs": [],
+            "final_report": ""
         }
-
+        
         with st.chat_message("assistant"):
             status_container = st.status("🕵️‍♂️ Agent 正在深度调研...", expanded=True)
             final_answer = ""
-
+            
             try:
                 graph_config = {"recursion_limit": 50}
                 for step in graph.stream(initial_state, config=graph_config):
@@ -440,7 +644,7 @@ def render_chat():
                             msgs = update.get("messages", [])
                             if msgs:
                                 final_answer = msgs[-1].content
-
+                
                 status_container.update(label="回答完成", state="complete", expanded=False)
                 
                 if final_answer:
@@ -459,7 +663,7 @@ def render_chat():
                     
                     # 渲染当前回答 (使用优化后的格式化函数)
                     format_display_message(final_answer)
-
+            
             except Exception as e:
                 status_container.update(label="Error", state="error")
                 st.error(f"运行错误: {e}")
@@ -472,7 +676,7 @@ def main():
     except FileNotFoundError:
         st.error("⚠️ 找不到 config.yaml，请先配置认证信息。")
         return
-
+    
     authenticator = stauth.Authenticate(
         config['credentials'],
         config['cookie']['name'],
@@ -480,20 +684,22 @@ def main():
         config['cookie']['expiry_days'],
         config.get('preauthorized')
     )
-
+    
     # 使用新的 API 方式进行登录
     authenticator.login()
-
+    
     if st.session_state["authentication_status"]:
         authenticator.logout(location='sidebar')
         st.sidebar.write(f'欢迎 *{st.session_state["name"]}*')
         
         with st.sidebar:
             st.title("DeepSeek RAG")
-            page = st.radio("导航", ["💬 对话", "⚙️ 知识库"], index=0)
-
+            page = st.radio("导航", ["💬 对话", "🧠 深度解读", "⚙️ 知识库"], index=0)
+        
         if page == "💬 对话":
             render_chat()
+        elif page == "🧠 深度解读":
+            render_deep_read_mode()
         else:
             render_kb_management()
     elif st.session_state["authentication_status"] is False:
