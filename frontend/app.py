@@ -5,6 +5,7 @@ import re
 import html
 import yaml
 import streamlit as st
+import streamlit.components.v1 as components  # 添加 components 导入
 import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 from dotenv import load_dotenv
@@ -146,6 +147,22 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # === 辅助功能 ===
+
+# === Mermaid 渲染辅助函数 ===
+def render_mermaid(code: str, height=300):
+    """
+    使用 CDN 加载 Mermaid.js 并渲染图表
+    """
+    html_code = f"""
+    <div class="mermaid">
+    {code}
+    </div>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({{ startOnLoad: true }});
+    </script>
+    """
+    components.html(html_code, height=height, scrolling=True)
 
 def generate_smart_title(query, answer):
     """使用 LLM 生成简短的会话标题"""
