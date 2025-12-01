@@ -248,7 +248,7 @@ def load_file_content(uploaded_file) -> str:
 def render_deep_read_mode():
     st.header("🧠 全文深度解读 (Full Context)")
     
-    # === 1. 侧边栏：历史报告 ===
+    # === 1. 侧边栏：历史报告 (保持不变) ===
     with st.sidebar:
         st.markdown("---")
         st.subheader("📜 历史报告")
@@ -273,18 +273,27 @@ def render_deep_read_mode():
                     delete_report(rep['id'])
                     st.rerun()
 
-    # === 2. 主界面：输入方式选择 (Tab) ===
-    input_tabs = st.tabs(["📁 上传文件", "📝 粘贴文本"])
-    
-    target_content = None
+    # === 2. 主界面：输入方式选择 (UI 优化：改用 Radio 防止 Tab 跳转) ===
+    # 初始化变量，防止未定义错误
+    uploaded_file = None
+    text_input = ""
     source_name = "Unknown"
     
-    with input_tabs[0]:
+    # 使用 Radio 横向排列代替 Tabs，这样 selection 会被 session_state 记住，不会跳动
+    input_mode = st.radio(
+        "选择输入来源", 
+        ["📁 上传文件", "📝 粘贴文本"], 
+        horizontal=True, 
+        label_visibility="collapsed" # 隐藏标题，使其看起来像 Tab 栏
+    )
+    st.markdown("---") # 加一条分割线，视觉上区分区域
+
+    if input_mode == "📁 上传文件":
         uploaded_file = st.file_uploader("上传 PDF 或 TXT 文档", type=["pdf", "txt"], key="deep_upload")
         if uploaded_file:
             source_name = uploaded_file.name
 
-    with input_tabs[1]:
+    else: # 模式为 "📝 粘贴文本"
         text_input = st.text_area("直接粘贴文本内容", height=300, placeholder="在此处粘贴论文全文、合同或长文章...")
         if text_input:
             source_name = "Text Input"
@@ -293,7 +302,7 @@ def render_deep_read_mode():
                 clean_title = text_input[:30].replace("\n", " ").strip()
                 source_name = f"文本: {clean_title}..."
 
-    # 确定输入源
+    # 确定输入源 (保持原有逻辑)
     start_disabled = True
     if uploaded_file or (text_input and len(text_input.strip()) > 50):
         start_disabled = False
@@ -301,7 +310,7 @@ def render_deep_read_mode():
     if "deep_state" not in st.session_state:
         st.session_state.deep_state = "idle"
 
-    # === 3. 开始按钮 ===
+    # === 3. 开始按钮 (保持不变) ===
     if st.button("🚀 开始深度解读", type="primary", disabled=start_disabled):
         st.session_state.deep_state = "running"
         st.session_state.deep_logs = []
