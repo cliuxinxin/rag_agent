@@ -174,19 +174,21 @@ def writer_node(state: AgentState) -> dict:
         "next": "Outlooker" # 依然保留 Outlooker 做最后的延伸
     }
 
-# === 4. Outlooker Node: 最后的升华 ===
-# 保持原有的逻辑，做扩展延伸，效果依然很好
+# === 4. Outlooker Node: 最后的升华 + 思考过程存档 ===
 def outlook_node(state: AgentState) -> dict:
     full_text = state["full_content"]
     current_report = state["final_report"]
+    # 获取积累的所有问答对（思考过程）
+    qa_history = state.get("qa_pairs", [])
     
     llm = get_llm()
     
+    # 1. 生成 Outlook 内容 (保持原有逻辑)
     task_prompt = f"""
     你是一个极其注重实用的咨询顾问。
     请阅读当前的分析报告，并增加一个 **# 🚀 扩展思考与资源** 章节。
     
-    - 如果是故事/案例：推荐相关的书籍、电影或急救知识（如推荐《最好的告别》、心肺复苏指南）。
+    - 如果是故事/案例：推荐相关的书籍、电影或急救知识。
     - 如果是技术：推荐相关的 GitHub 库、替代方案对比。
     
     请直接输出 Markdown 内容追加到末尾。
@@ -198,7 +200,26 @@ def outlook_node(state: AgentState) -> dict:
     ]
     
     outlook_content = llm.invoke(messages).content
+    
+    # 2. 拼接：原报告 + Outlook
     final_full_report = current_report + "\n\n" + outlook_content
+    
+    # === 3. 新增核心逻辑：将思考过程追加到文末 ===
+    # 使用 HTML <details> 标签实现折叠效果，既保留了数据，又不影响阅读体验
+    if qa_history:
+        log_section = "\n\n---\n\n<details>\n<summary>🧠 点击查看 AI 完整思考与推演过程 (Trace Logs)</summary>\n\n"
+        
+        log_section += "> 以下记录了 Agent 从阅读到提问、再到结合常识推理的完整思维链。\n\n"
+        
+        for i, pair in enumerate(qa_history):
+            # pair 的格式已经是 "❓ Q: ... \n💡 A: ..."
+            # 我们稍微美化一下格式
+            log_section += f"#### 🔄 第 {i+1} 轮思考\n"
+            log_section += f"{pair}\n\n"
+            
+        log_section += "</details>\n"
+        
+        final_full_report += log_section
     
     return {
         "final_report": final_full_report,
