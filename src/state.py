@@ -23,6 +23,11 @@ def add_strings(left: list, right: list):
     if right is None: right = []
     return left + right
 
+# === 新增：简单的列表替换逻辑 ===
+def replace_list(old, new):
+    """用于直接替换列表内容（针对 suggested_questions）"""
+    return new
+
 class AgentState(TypedDict):
     # === 基础字段 ===
     messages: Annotated[Sequence[BaseMessage], add_messages]
@@ -41,6 +46,9 @@ class AgentState(TypedDict):
     qa_pairs: Annotated[List[str], add_strings] # 积累的思考过程
     
     final_report: str        # 最终输出
+    
+    # [新增] 推荐的追问问题 (每次生成新的覆盖旧的)
+    suggested_questions: Annotated[List[str], replace_list]
     
     # 原始知识库
     source_documents: List[Document]

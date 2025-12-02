@@ -410,138 +410,174 @@ def render_deep_read_mode():
             st.session_state.deep_state = "idle"
             st.rerun()
 
-# === 新增：深度问答独立界面 ===
+# === 新增：深度对话模式 ===
 def render_deep_qa_mode():
-    st.header("❓ 深度问答 (Deep QA)")
-    st.caption("上传一份文档，针对它进行打破砂锅问到底的深度探究。")
-    st.info("💡 此模式不依赖知识库，而是将整份文档加载到 AI 大脑中进行多轮推演。")
+    st.header("❓ 深度追问模式 (Deep Chat)")
+    st.caption("上传文档，AI 将针对您的提问进行多轮推演与查证。支持连续追问，自动保持上下文。")
 
-    # 1. 侧边栏：仅显示历史记录，不显示知识库管理
+    # === 1. 会话状态初始化 ===
+    if "qa_session_active" not in st.session_state:
+        st.session_state.qa_session_active = False
+        st.session_state.qa_chat_history = [] # 结构: {"role": "user/ai", "content": "...", "thoughts": "..."}
+        st.session_state.qa_current_suggestions = []
+        st.session_state.qa_agent_state = None # 用于持久化保存 Graph 的 State (QA Pairs等)
+
+    # === 2. 侧边栏：文件上传与重置 ===
     with st.sidebar:
-        st.subheader("📜 问答历史")
-        # 我们可以简单复用 get_all_reports，或者为了区分，你可以加个过滤器
-        history_reports = get_all_reports()
-        for rep in history_reports:
-            # 简单的过滤：假设问答的标题我们都自动加上了 "问答:" 前缀
-            if rep['title'].startswith("问答:"):
-                col1, col2 = st.columns([5, 1])
-                with col1:
-                    if st.button(f"📄 {rep['title'][3:]}", key=f"qa_h_{rep['id']}"): # 去掉前缀显示
-                        full_data = get_report_content(rep['id'])
-                        if full_data:
-                            st.session_state.qa_state = "done"
-                            st.session_state.qa_result = full_data['content']
-                            st.rerun()
-                with col2:
-                    if st.button("🗑️", key=f"qa_d_{rep['id']}"):
-                        delete_report(rep['id'])
-                        st.rerun()
-
-    # 2. 主界面：文件输入 + 问题输入
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        # 使用 File Uploader
-        uploaded_file = st.file_uploader("📄 上传文档 (PDF/TXT)", type=["pdf", "txt"], key="qa_uploader")
-    with c2:
-        # 使用 Text Area
-        text_input = st.text_area("📝 或直接粘贴文本", height=150, placeholder="在此处粘贴长文...", key="qa_paster")
-
-    # 3. 核心：用户提问框
-    st.markdown("### 🎯 您想了解什么？")
-    user_question = st.text_input("请输入您的问题", placeholder="例如：这篇文章提到的核心技术方案有哪些潜在风险？", key="qa_query")
-
-    # 4. 逻辑处理
-    if "qa_state" not in st.session_state:
-        st.session_state.qa_state = "idle"
-
-    # 校验是否可以开始
-    has_doc = uploaded_file is not None or (text_input and len(text_input) > 10)
-    has_query = user_question and len(user_question) > 0
-    
-    if st.button("🚀 开始深度探究", type="primary", disabled=not (has_doc and has_query), use_container_width=True):
-        st.session_state.qa_state = "running"
-        st.session_state.qa_result = ""
+        st.subheader("📄 文档加载")
+        uploaded_file = st.file_uploader("上传文档 (PDF/TXT)", type=["pdf", "txt"], key="qa_chat_upload")
+        text_input = st.text_area("或粘贴文本", height=100, placeholder="粘贴内容...", key="qa_chat_paste")
         
-        # 提取文本
-        full_content = ""
-        doc_title = "未命名文档"
-        with st.spinner("正在加载文档..."):
+        # 只要文件发生变化，就重置会话
+        start_btn = st.button("🔄 加载/重置会话", type="primary", use_container_width=True)
+        
+        if start_btn:
+            full_content = ""
+            doc_title = "未命名"
             if uploaded_file:
                 full_content = load_file_content(uploaded_file)
                 doc_title = uploaded_file.name
             elif text_input:
                 full_content = text_input
                 doc_title = f"文本片段: {text_input[:10]}..."
+            
+            if full_content:
+                st.session_state.qa_session_active = True
+                st.session_state.qa_chat_history = []
+                st.session_state.qa_current_suggestions = []
+                # 初始化 Agent State (注意：这是 Graph 的内部状态)
+                st.session_state.qa_agent_state = {
+                    "messages": [],
+                    "full_content": full_content, # <--- 这里存进去，后续追问复用，触发 Context Caching
+                    "doc_title": doc_title,
+                    "qa_pairs": [], # <--- 关键：这里保存了查证历史
+                    "loop_count": 0
+                }
+                st.success(f"已加载: {doc_title}")
+                st.rerun()
+            else:
+                st.error("请先上传文件或输入文本")
 
-        # 初始化图状态
-        qa_input = {
-            "messages": [],
-            "full_content": full_content,
-            "doc_title": doc_title,
-            "user_goal": user_question, # <--- 传入问题
-            "next": "QAPlanner",        # 指定 QA 图的入口
-            "loop_count": 0,
-            "qa_pairs": [],
-            "current_question": "",
-            "final_report": ""
-        }
-        st.session_state.qa_input_data = qa_input
-        st.rerun()
+    # === 3. 聊天主界面 ===
+    if not st.session_state.qa_session_active:
+        st.info("👈 请在左侧上传文档并点击【加载/重置会话】开始。")
+        return
 
-    # 5. 运行展示
-    if st.session_state.qa_state == "running":
-        # 显示一个状态容器
-        with st.status("🕵️‍♂️ Agent 正在思考中...", expanded=True) as status:
-            final_output = ""
+    # 显示历史消息
+    for msg in st.session_state.qa_chat_history:
+        with st.chat_message(msg["role"]):
+            # 如果有思考过程（trace），先显示折叠框
+            if "thoughts" in msg and msg["thoughts"]:
+                with st.expander("🧠 查看 AI 的规划与查证过程", expanded=False):
+                    st.markdown(msg["thoughts"])
+            st.markdown(msg["content"])
+
+    # === 4. 处理用户输入（文本框 OR 推荐按钮） ===
+    
+    # 推荐问题区
+    user_input = None
+    if st.session_state.qa_current_suggestions:
+        st.write("👉 **您可以追问：**")
+        cols = st.columns(3)
+        for i, sugg in enumerate(st.session_state.qa_current_suggestions):
+            if cols[i].button(sugg, key=f"sugg_{len(st.session_state.qa_chat_history)}_{i}"):
+                user_input = sugg
+
+    # 聊天输入框
+    chat_input = st.chat_input("请输入您的问题...")
+    if chat_input:
+        user_input = chat_input
+
+    # === 5. 执行推理逻辑 ===
+    if user_input:
+        # 1. 显示用户提问
+        st.session_state.qa_chat_history.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # 2. 准备 Graph 输入
+        # 我们必须复用之前的 state (尤其是 qa_pairs 和 full_content)
+        current_state = st.session_state.qa_agent_state
+        
+        # 更新本次的目标
+        current_state["user_goal"] = user_input
+        current_state["loop_count"] = 0 # 重置循环计数，针对新问题重新规划
+        # current_state["qa_pairs"] 保持不变，这样 Planner 知道之前查过什么
+        
+        # 3. 运行 Agent 并流式显示
+        with st.chat_message("assistant"):
+            # 占位符：用于实时更新思考过程
+            thought_container = st.status("🕵️‍♂️ DeepSeek 正在思考与查证...", expanded=True)
+            thought_log = "" # 累积思考日志
+            response_placeholder = st.empty()
+            
+            final_answer = ""
+            new_suggestions = []
+            
             try:
-                # 调用 deep_qa_graph
-                for step in deep_qa_graph.stream(st.session_state.qa_input_data, config={"recursion_limit": 50}):
+                # 运行 Graph
+                for step in deep_qa_graph.stream(current_state, config={"recursion_limit": 50}):
                     for node, update in step.items():
                         
+                        # === 实时日志更新 ===
                         if node == "QAPlanner":
                             q = update.get("current_question")
                             if q:
-                                status.write(f"🤔 **拆解问题**: 为了回答您，我需要先查证：`{q}`")
+                                log_entry = f"🤔 **规划**: 为了回答，需要查证: `{q}`\n\n"
+                                thought_container.write(log_entry)
+                                thought_log += log_entry
                             else:
-                                status.write("✅ **信息充足**，开始汇总答案...")
-                        
+                                log_entry = "✅ **规划**: 信息充足，开始汇总。\n\n"
+                                thought_container.write(log_entry)
+                                thought_log += log_entry
+                                
                         elif node == "Researcher":
-                            # 取出最新的一条 Q&A 显示
                             pairs = update.get("qa_pairs", [])
                             if pairs:
-                                # 简单解析一下显示
-                                latest = pairs[-1]
-                                # 截取 Answer 部分展示
-                                answer_part = latest.split("**A**:")[1] if "**A**:" in latest else latest
-                                status.write(f"📚 **查证结果**: {answer_part[:50]}...")
+                                latest_qa = pairs[-1]
+                                # 美化展示
+                                if "**A**:" in latest_qa:
+                                    q_part = latest_qa.split("**A**:")[0]
+                                    a_part = latest_qa.split("**A**:")[1][:100] + "..."
+                                else:
+                                    q_part = "查证"
+                                    a_part = latest_qa[:100]
+                                    
+                                log_entry = f"📚 **查证**: {q_part.strip()}\n> 结果: {a_part}\n\n"
+                                thought_container.write(log_entry)
+                                thought_log += log_entry
                         
                         elif node == "QAWriter":
-                            status.write("✍️ **正在撰写最终回答**...")
-                            final_output = update.get("final_report")
-
-                status.update(label="完成！", state="complete", expanded=False)
-                st.session_state.qa_result = final_output
-                st.session_state.qa_state = "done"
+                            final_answer = update.get("final_report", "")
+                            thought_container.update(label="思考完成", state="complete", expanded=False)
+                            response_placeholder.markdown(final_answer)
+                            
+                        elif node == "Suggester":
+                            new_suggestions = update.get("suggested_questions", [])
                 
-                # 自动保存 (加个前缀以便区分)
-                save_title = f"问答: {user_question}"
-                save_report(save_title, st.session_state.qa_input_data['doc_title'], final_output)
+                # 4. 更新 Session 状态
+                
+                # 保存最新的 Graph State (包含了新增的 qa_pairs)
+                # 注意：graph.stream 返回的 step 只是增量，我们需要获取最终的 state
+                # 但简单起见，我们手动更新 qa_pairs 到 session_state 中
+                # 更严谨的做法是 capture 最后一个 step 的 state，这里我们简化处理：
+                # 因为 AgentState 是引用传递，current_state 在运行中已经被修改了（特别是 qa_pairs）
+                st.session_state.qa_agent_state = current_state 
+                st.session_state.qa_current_suggestions = new_suggestions
+                
+                # 将 AI 回答加入历史
+                st.session_state.qa_chat_history.append({
+                    "role": "assistant", 
+                    "content": final_answer,
+                    "thoughts": thought_log # 保存思考过程，以便折叠显示
+                })
+                
+                # 强制刷新以显示推荐按钮
                 st.rerun()
-
+                
             except Exception as e:
-                st.error(f"运行出错: {e}")
-                st.session_state.qa_state = "idle"
-
-    # 6. 结果显示
-    if st.session_state.qa_state == "done" and st.session_state.qa_result:
-        st.divider()
-        st.subheader("💡 回答")
-        st.markdown(st.session_state.qa_result)
-        
-        st.divider()
-        if st.button("🔙 返回首页"):
-            st.session_state.qa_state = "idle"
-            st.rerun()
+                thought_container.update(label="发生错误", state="error")
+                st.error(f"Error: {e}")
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
@@ -826,13 +862,13 @@ def main():
         
         with st.sidebar:
             st.title("DeepSeek RAG")
-            page = st.radio("导航", ["💬 对话", "🧠 深度解读", "❓ 深度问答", "⚙️ 知识库"], index=0)
+            page = st.radio("导航", ["💬 对话", "🧠 深度解读", "❓ 深度追问", "⚙️ 知识库"], index=0)
         
         if page == "💬 对话":
             render_chat()
         elif page == "🧠 深度解读":
             render_deep_read_mode()
-        elif page == "❓ 深度问答":
+        elif page == "❓ 深度追问":
             render_deep_qa_mode()
         else:
             render_kb_management()

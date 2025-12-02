@@ -1,4 +1,5 @@
 import os
+import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from src.state import AgentState
@@ -316,11 +317,10 @@ def qa_writer_node(state: AgentState) -> dict:
     
     answer = llm.invoke(messages).content
     
-    # 问答模式结束后，直接结束，不需要 Outlooker（扩展思考），或者你也可以保留
-    # 这里我们选择直接结束，让体验更像"问答"
+    # 修改：下一步去 Suggester，而不是 END
     return {
         "final_report": answer,
-        "next": "END"
+        "next": "Suggester"
     }
 
 # 3. 复用节点 (Researcher)
@@ -351,6 +351,49 @@ def researcher_node(state: AgentState) -> dict:
     # 关键：Researcher 不决定下一步去哪，它只负责把结果塞进 state
     # 具体的路由由 Graph 的 Edge 决定
     return {"qa_pairs": [qa_entry]} 
+
+# === 新增：追问推荐节点 (Suggester) ===
+def suggester_node(state: AgentState) -> dict:
+    full_text = state["full_content"]
+    user_goal = state["user_goal"]
+    current_answer = state["final_report"]
+    
+    llm = get_llm()
+    
+    task_prompt = f"""
+    【用户的问题】{user_goal}
+    【AI 的回答】{current_answer}
+    
+    【任务】
+    基于文档内容和当前的对话上下文，请推荐 **3个** 值得用户继续追问的问题。
+    
+    【要求】
+    1. 问题必须与文档内容紧密相关。
+    2. 问题要有深度，引导用户探索文档中未被充分讨论的细节或逻辑漏洞。
+    3. 格式要求：只输出3行文本，每行一个问题，不要带序号，不要带其他废话。
+    """
+    
+    messages = [
+        SystemMessage(content=get_cached_system_prompt(full_text)),
+        HumanMessage(content=task_prompt)
+    ]
+    
+    response = llm.invoke(messages).content.strip()
+    
+    # 简单的格式清洗
+    lines = response.split('\n')
+    clean_questions = []
+    for line in lines:
+        # 去掉 "1. ", "- ", "• " 等前缀
+        clean = re.sub(r"^[\d\.\-\•\s]+", "", line).strip()
+        if clean:
+            clean_questions.append(clean)
+            
+    # 确保只有3个
+    return {
+        "suggested_questions": clean_questions[:3],
+        "next": "END"
+    }
 
 
 # ==========================================
@@ -389,6 +432,7 @@ qa_workflow = StateGraph(AgentState)
 qa_workflow.add_node("QAPlanner", qa_planner_node)
 qa_workflow.add_node("Researcher", researcher_node)
 qa_workflow.add_node("QAWriter", qa_writer_node)
+qa_workflow.add_node("Suggester", suggester_node) # 新增节点
 
 # 设置入口
 qa_workflow.set_entry_point("QAPlanner")
@@ -404,8 +448,11 @@ qa_workflow.add_conditional_edges(
 # 2. Researcher 查完资料，必须回 QAPlanner 继续规划
 qa_workflow.add_edge("Researcher", "QAPlanner")
 
-# 3. Writer 写完直接结束
-qa_workflow.add_edge("QAWriter", END)
+# 3. Writer 写完去 Suggester
+qa_workflow.add_edge("QAWriter", "Suggester")
+
+# 4. Suggester 完成后结束
+qa_workflow.add_edge("Suggester", END)
 
 deep_qa_graph = qa_workflow.compile()
 
