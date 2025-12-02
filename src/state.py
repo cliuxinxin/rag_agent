@@ -27,17 +27,20 @@ class AgentState(TypedDict):
     # === 基础字段 ===
     messages: Annotated[Sequence[BaseMessage], add_messages]
     
-    # === 深度解读专用字段 ===
-    full_content: str        # <--- 核心：存储文档全文，用于 Context Caching
-    doc_title: str           # 文档标题（文件名）
+    # === 深度模式通用字段 ===
+    full_content: str        # 文档全文 (Context Caching 用)
+    doc_title: str           # 文档标题
     
-    next: str                # 下一步是谁
-    loop_count: int          # 轮次计数
+    # [新增] 仅用于深度问答模式：用户的核心问题
+    user_goal: str           
     
-    current_question: str    # Planner 提出的当前问题
-    qa_pairs: Annotated[List[str], add_strings] # 积累的问答对
+    next: str                
+    loop_count: int          
     
-    final_report: str        # 最终产出
+    current_question: str    # Agent 当前正在研究的子问题
+    qa_pairs: Annotated[List[str], add_strings] # 积累的思考过程
+    
+    final_report: str        # 最终输出
     
     # 原始知识库
     source_documents: List[Document]

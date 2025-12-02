@@ -226,7 +226,135 @@ def outlook_node(state: AgentState) -> dict:
         "next": "END"
     }
 
-# === 构建图 (保持不变) ===
+# ==========================================
+# PART 2: 深度问答流 (Deep QA) - 全新代码
+# ==========================================
+
+# 1. QA 专用规划器：目的是"拆解用户问题"，而不是"发现文章亮点"
+def qa_planner_node(state: AgentState) -> dict:
+    full_text = state["full_content"]
+    qa_history = state.get("qa_pairs", [])
+    user_goal = state["user_goal"] # 用户的问题
+    loop = state.get("loop_count", 0)
+    MAX_LOOPS = 5  # 问答模式允许更多轮次以确保准确
+    
+    llm = get_llm()
+    history_text = "\n".join(qa_history) if qa_history else "（暂无，第一轮分析）"
+    
+    task_prompt = f"""
+    当前思考轮次: {loop + 1}/{MAX_LOOPS}
+    
+    【用户提出的核心问题】
+    "{user_goal}"
+    
+    【我们已从文中查证的信息】
+    {history_text}
+    
+    【任务目标】
+    你的唯一目标是完整、准确地回答用户的核心问题。
+    请判断：基于【已查证的信息】，我们是否已经能完美回答这个问题？
+    
+    - 如果还缺信息（例如用户问对比，但我们只查了A方），请提出下一个**具体的子问题**。
+    - 如果用户问的是细节（如数据），请通过子问题反复确认上下文。
+    
+    【输出要求】
+    - 如果信息已充足，请直接输出 "TERMINATE"。
+    - 否则，输出一个**为了回答核心问题必须搞清楚的子问题**。
+    """
+    
+    messages = [
+        SystemMessage(content=get_cached_system_prompt(full_text)),
+        HumanMessage(content=task_prompt)
+    ]
+    
+    response = llm.invoke(messages).content.strip()
+    question = response.replace('"', '').replace("'", "")
+    
+    if "TERMINATE" in response or loop >= MAX_LOOPS:
+        return {"next": "QAWriter", "current_question": ""}
+    else:
+        # 复用通用的 Researcher，因为它就是负责"去文中找答案"的
+        return {
+            "next": "Researcher", 
+            "current_question": question, 
+            "loop_count": loop + 1
+        }
+
+# 2. QA 专用撰写者：目的是"直接回答问题"，而不是"写导读报告"
+def qa_writer_node(state: AgentState) -> dict:
+    full_text = state["full_content"]
+    qa_history = state.get("qa_pairs", [])
+    doc_title = state.get("doc_title", "文档")
+    user_goal = state["user_goal"]
+    
+    llm = get_llm()
+    history_text = "\n\n".join(qa_history)
+    
+    task_prompt = f"""
+    我们针对文档《{doc_title}》进行了针对性的深度调研。
+    
+    【用户提问】
+    {user_goal}
+    
+    【调研过程与发现】
+    {history_text}
+    
+    【任务】
+    请基于上述调研发现，撰写最终回答。
+    
+    【要求】
+    1. **直击痛点**：第一句话直接给出核心结论。
+    2. **证据确凿**：引用文中的具体段落或数据来支持你的观点（基于调研发现）。
+    3. **逻辑闭环**：如果文中没有直接答案，请根据文中的线索进行合理推断，并注明这是推断。
+    4. 不要写成"导读"或"读后感"，要写成专业的"答案"。
+    """
+    
+    messages = [
+        SystemMessage(content=get_cached_system_prompt(full_text)),
+        HumanMessage(content=task_prompt)
+    ]
+    
+    answer = llm.invoke(messages).content
+    
+    # 问答模式结束后，直接结束，不需要 Outlooker（扩展思考），或者你也可以保留
+    # 这里我们选择直接结束，让体验更像"问答"
+    return {
+        "final_report": answer,
+        "next": "END"
+    }
+
+# 3. 复用节点 (Researcher)
+# 注意：我们需要确保原有 deep_flow.py 里有 researcher_node
+# 如果没有（之前是在 nodes.py），这里需要定义它，或者从原处 import
+# 这里为了完整性写一遍 Researcher，它是两个 Graph 共用的核心能力
+def researcher_node(state: AgentState) -> dict:
+    full_text = state["full_content"]
+    question = state["current_question"]
+    llm = get_llm()
+    
+    task_prompt = f"""
+    【待解决问题】{question}
+    【要求】
+    1. 请仔细阅读缓存的全文，找到原文依据。
+    2. 结合常识进行简短分析。
+    3. 直接回答这个问题。
+    """
+    
+    messages = [
+        SystemMessage(content=get_cached_system_prompt(full_text)),
+        HumanMessage(content=task_prompt)
+    ]
+    
+    answer = llm.invoke(messages).content
+    qa_entry = f"❓ **Q**: {question}\n💡 **A**: {answer}"
+    
+    # 关键：Researcher 不决定下一步去哪，它只负责把结果塞进 state
+    # 具体的路由由 Graph 的 Edge 决定
+    return {"qa_pairs": [qa_entry]} 
+
+
+# ==========================================
+# 构建图 (保持不变) ===
 def build_graph():
     workflow = StateGraph(AgentState)
     workflow.add_node("Planner", planner_node)
@@ -250,3 +378,36 @@ def build_graph():
     return workflow.compile()
 
 deep_graph = build_graph()
+
+# ==========================================
+# 构建 QA 专用 Graph
+# ==========================================
+
+qa_workflow = StateGraph(AgentState)
+
+# 添加节点
+qa_workflow.add_node("QAPlanner", qa_planner_node)
+qa_workflow.add_node("Researcher", researcher_node)
+qa_workflow.add_node("QAWriter", qa_writer_node)
+
+# 设置入口
+qa_workflow.set_entry_point("QAPlanner")
+
+# 添加边
+# 1. Planner 决定是去查资料(Researcher) 还是 写答案(QAWriter)
+qa_workflow.add_conditional_edges(
+    "QAPlanner", 
+    lambda x: x["next"], 
+    {"Researcher": "Researcher", "QAWriter": "QAWriter"}
+)
+
+# 2. Researcher 查完资料，必须回 QAPlanner 继续规划
+qa_workflow.add_edge("Researcher", "QAPlanner")
+
+# 3. Writer 写完直接结束
+qa_workflow.add_edge("QAWriter", END)
+
+deep_qa_graph = qa_workflow.compile()
+
+# 导出两个图：deep_graph (原有深度解读) 和 deep_qa_graph (新增深度问答)
+__all__ = ['deep_graph', 'deep_qa_graph']
