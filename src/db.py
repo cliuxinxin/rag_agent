@@ -1,5 +1,6 @@
 import sqlite3
 import uuid
+import json  # 新增
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -44,6 +45,18 @@ def init_db():
         source_name TEXT, -- 文件名或 "Text Input"
         content TEXT,     -- 最终的 Markdown 报告
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # === [新增] 会话附带的上下文数据表 ===
+    # 用于存储深度问答模式下的：文档全文、文档标题、以及 Agent 的推理历史
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS session_artifacts (
+        session_id TEXT PRIMARY KEY,
+        doc_title TEXT,
+        doc_content TEXT,  -- 存储文档全文
+        qa_pairs TEXT,     -- 存储 JSON 格式的推理历史 (List[str])
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )
     ''')
 
@@ -151,5 +164,50 @@ def delete_report(report_id: str):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute("DELETE FROM research_reports WHERE id = ?", (report_id,))
+    conn.commit()
+    conn.close()
+
+# === [新增] 上下文管理函数 ===
+
+def save_session_artifact(session_id: str, doc_title: str, doc_content: str, qa_pairs: List[str]):
+    """保存或更新会话的文档和推理历史"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    
+    qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
+    
+    c.execute('''
+    INSERT OR REPLACE INTO session_artifacts (session_id, doc_title, doc_content, qa_pairs)
+    VALUES (?, ?, ?, ?)
+    ''', (session_id, doc_title, doc_content, qa_pairs_json))
+    
+    conn.commit()
+    conn.close()
+
+def get_session_artifact(session_id: str) -> Optional[Dict]:
+    """获取会话的文档和推理历史"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM session_artifacts WHERE session_id = ?", (session_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        data = dict(row)
+        # 反序列化 qa_pairs
+        try:
+            data['qa_pairs'] = json.loads(data['qa_pairs'])
+        except:
+            data['qa_pairs'] = []
+        return data
+    return None
+
+def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
+    """仅更新推理历史"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
+    c.execute("UPDATE session_artifacts SET qa_pairs = ? WHERE session_id = ?", (qa_pairs_json, session_id))
     conn.commit()
     conn.close()

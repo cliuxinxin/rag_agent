@@ -20,6 +20,8 @@ from src.storage import save_kb, load_kbs, list_kbs, delete_kb, get_kb_details
 from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
 # 引入数据库新函数
 from src.db import save_report, get_all_reports, get_report_content, delete_report
+# 引入新的 DB 函数
+from src.db import save_session_artifact, get_session_artifact, update_session_qa_pairs
 # 引入 LLM 获取函数用于生成标题
 from src.nodes import get_llm
 # 引入深度解读模块
@@ -412,172 +414,217 @@ def render_deep_read_mode():
 
 # === 新增：深度对话模式 ===
 def render_deep_qa_mode():
-    st.header("❓ 深度追问模式 (Deep Chat)")
-    st.caption("上传文档，AI 将针对您的提问进行多轮推演与查证。支持连续追问，自动保持上下文。")
-
-    # === 1. 会话状态初始化 ===
-    if "qa_session_active" not in st.session_state:
-        st.session_state.qa_session_active = False
-        st.session_state.qa_chat_history = [] # 结构: {"role": "user/ai", "content": "...", "thoughts": "..."}
-        st.session_state.qa_current_suggestions = []
-        st.session_state.qa_agent_state = None # 用于持久化保存 Graph 的 State (QA Pairs等)
-
-    # === 2. 侧边栏：文件上传与重置 ===
+    # === 1. 侧边栏：会话管理 ===
     with st.sidebar:
-        st.subheader("📄 文档加载")
-        uploaded_file = st.file_uploader("上传文档 (PDF/TXT)", type=["pdf", "txt"], key="qa_chat_upload")
-        text_input = st.text_area("或粘贴文本", height=100, placeholder="粘贴内容...", key="qa_chat_paste")
+        st.header("🗂️ 追问会话")
         
-        # 只要文件发生变化，就重置会话
-        start_btn = st.button("🔄 加载/重置会话", type="primary", use_container_width=True)
-        
-        if start_btn:
-            full_content = ""
-            doc_title = "未命名"
-            if uploaded_file:
-                full_content = load_file_content(uploaded_file)
-                doc_title = uploaded_file.name
-            elif text_input:
-                full_content = text_input
-                doc_title = f"文本片段: {text_input[:10]}..."
+        # 新建会话按钮
+        if st.button("➕ 新建文档追问", use_container_width=True, type="primary"):
+            new_id = create_session("未命名追问")
+            st.session_state.current_session_id = new_id
+            st.rerun()
             
-            if full_content:
-                st.session_state.qa_session_active = True
-                st.session_state.qa_chat_history = []
-                st.session_state.qa_current_suggestions = []
-                # 初始化 Agent State (注意：这是 Graph 的内部状态)
-                st.session_state.qa_agent_state = {
-                    "messages": [],
-                    "full_content": full_content, # <--- 这里存进去，后续追问复用，触发 Context Caching
-                    "doc_title": doc_title,
-                    "qa_pairs": [], # <--- 关键：这里保存了查证历史
-                    "loop_count": 0
-                }
-                st.success(f"已加载: {doc_title}")
-                st.rerun()
-            else:
-                st.error("请先上传文件或输入文本")
+        st.markdown("---")
+        
+        # 列出所有会话
+        # 注意：这里简单的列出所有 session。
+        # 实际体验中，你可能想只列出有过 Artifact 的 session，或者混在一起。
+        # 这里为了保持一致性，我们复用通用的 session 列表逻辑
+        sessions = get_all_sessions()
+        
+        for s in sessions:
+            is_active = (s['id'] == st.session_state.current_session_id)
+            btn_type = "primary" if is_active else "secondary"
+            
+            # 检查这个 session 是否有 Deep QA 的数据 (Artifact)
+            # 这是一个轻量级查询，为了图标区分
+            # (在生产环境中建议优化，比如在 sessions 表加 type 字段)
+            artifact = get_session_artifact(s['id'])
+            icon = "🕵️‍♂️" if artifact else "📝"
+            
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                if st.button(f"{icon} {s['title']}", key=f"sess_qa_{s['id']}", use_container_width=True, type=btn_type):
+                    st.session_state.current_session_id = s['id']
+                    st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"del_qa_{s['id']}"):
+                    delete_session(s['id'])
+                    if st.session_state.current_session_id == s['id']:
+                        st.session_state.current_session_id = None
+                    st.rerun()
 
-    # === 3. 聊天主界面 ===
-    if not st.session_state.qa_session_active:
-        st.info("👈 请在左侧上传文档并点击【加载/重置会话】开始。")
+    # === 2. 主区域逻辑 ===
+    st.title("❓ 深度追问模式")
+    
+    # 如果没有选中会话，提示新建
+    if not st.session_state.current_session_id:
+        st.info("👈 请在左侧新建会话或选择已有会话。")
         return
 
-    # 显示历史消息
-    for msg in st.session_state.qa_chat_history:
-        with st.chat_message(msg["role"]):
-            # 如果有思考过程（trace），先显示折叠框
-            if "thoughts" in msg and msg["thoughts"]:
-                with st.expander("🧠 查看 AI 的规划与查证过程", expanded=False):
-                    st.markdown(msg["thoughts"])
-            st.markdown(msg["content"])
-
-    # === 4. 处理用户输入（文本框 OR 推荐按钮） ===
+    current_session_id = st.session_state.current_session_id
     
-    # 推荐问题区
-    user_input = None
-    if st.session_state.qa_current_suggestions:
-        st.write("👉 **您可以追问：**")
-        cols = st.columns(3)
-        for i, sugg in enumerate(st.session_state.qa_current_suggestions):
-            if cols[i].button(sugg, key=f"sugg_{len(st.session_state.qa_chat_history)}_{i}"):
-                user_input = sugg
-
-    # 聊天输入框
-    chat_input = st.chat_input("请输入您的问题...")
-    if chat_input:
-        user_input = chat_input
-
-    # === 5. 执行推理逻辑 ===
-    if user_input:
-        # 1. 显示用户提问
-        st.session_state.qa_chat_history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        # 2. 准备 Graph 输入
-        # 我们必须复用之前的 state (尤其是 qa_pairs 和 full_content)
-        current_state = st.session_state.qa_agent_state
+    # 尝试加载当前会话的 Artifact (文档和记忆)
+    artifact = get_session_artifact(current_session_id)
+    
+    # 场景 A: 新会话，还没有上传文档 -> 显示上传界面 (在右侧/主区域)
+    if not artifact:
+        st.markdown("### 1️⃣ 第一步：请提供深度分析的素材")
         
-        # 更新本次的目标
-        current_state["user_goal"] = user_input
-        current_state["loop_count"] = 0 # 重置循环计数，针对新问题重新规划
-        # current_state["qa_pairs"] 保持不变，这样 Planner 知道之前查过什么
-        
-        # 3. 运行 Agent 并流式显示
-        with st.chat_message("assistant"):
-            # 占位符：用于实时更新思考过程
-            thought_container = st.status("🕵️‍♂️ DeepSeek 正在思考与查证...", expanded=True)
-            thought_log = "" # 累积思考日志
-            response_placeholder = st.empty()
+        with st.container(border=True):
+            tab1, tab2 = st.tabs(["📁 上传文档", "📝 粘贴文本"])
             
-            final_answer = ""
-            new_suggestions = []
+            full_content = ""
+            doc_title = ""
             
-            try:
-                # 运行 Graph
-                for step in deep_qa_graph.stream(current_state, config={"recursion_limit": 50}):
-                    for node, update in step.items():
-                        
-                        # === 实时日志更新 ===
-                        if node == "QAPlanner":
-                            q = update.get("current_question")
-                            if q:
-                                log_entry = f"🤔 **规划**: 为了回答，需要查证: `{q}`\n\n"
-                                thought_container.write(log_entry)
-                                thought_log += log_entry
-                            else:
-                                log_entry = "✅ **规划**: 信息充足，开始汇总。\n\n"
-                                thought_container.write(log_entry)
-                                thought_log += log_entry
-                                
-                        elif node == "Researcher":
-                            pairs = update.get("qa_pairs", [])
-                            if pairs:
-                                latest_qa = pairs[-1]
-                                # 美化展示
-                                if "**A**:" in latest_qa:
-                                    q_part = latest_qa.split("**A**:")[0]
-                                    a_part = latest_qa.split("**A**:")[1][:100] + "..."
-                                else:
-                                    q_part = "查证"
-                                    a_part = latest_qa[:100]
-                                    
-                                log_entry = f"📚 **查证**: {q_part.strip()}\n> 结果: {a_part}\n\n"
-                                thought_container.write(log_entry)
-                                thought_log += log_entry
-                        
-                        elif node == "QAWriter":
-                            final_answer = update.get("final_report", "")
-                            thought_container.update(label="思考完成", state="complete", expanded=False)
-                            response_placeholder.markdown(final_answer)
-                            
-                        elif node == "Suggester":
-                            new_suggestions = update.get("suggested_questions", [])
-                
-                # 4. 更新 Session 状态
-                
-                # 保存最新的 Graph State (包含了新增的 qa_pairs)
-                # 注意：graph.stream 返回的 step 只是增量，我们需要获取最终的 state
-                # 但简单起见，我们手动更新 qa_pairs 到 session_state 中
-                # 更严谨的做法是 capture 最后一个 step 的 state，这里我们简化处理：
-                # 因为 AgentState 是引用传递，current_state 在运行中已经被修改了（特别是 qa_pairs）
-                st.session_state.qa_agent_state = current_state 
-                st.session_state.qa_current_suggestions = new_suggestions
-                
-                # 将 AI 回答加入历史
-                st.session_state.qa_chat_history.append({
-                    "role": "assistant", 
-                    "content": final_answer,
-                    "thoughts": thought_log # 保存思考过程，以便折叠显示
-                })
-                
-                # 强制刷新以显示推荐按钮
+            with tab1:
+                uploaded_file = st.file_uploader("支持 PDF/TXT", type=["pdf", "txt"], key="new_qa_upload")
+                if uploaded_file:
+                    doc_title = uploaded_file.name
+                    if st.button("确认上传并开始", key="btn_upload"):
+                        full_content = load_file_content(uploaded_file)
+
+            with tab2:
+                text_input = st.text_area("输入长文本", height=200)
+                if text_input and st.button("确认提交文本", key="btn_paste"):
+                    doc_title = f"文本: {text_input[:15]}..."
+                    full_content = text_input
+            
+            # 处理保存
+            if full_content:
+                # 1. 保存到 DB
+                save_session_artifact(current_session_id, doc_title, full_content, [])
+                # 2. 更新会话标题
+                update_session_title(current_session_id, f"追问: {doc_title}")
+                # 3. 刷新页面进入聊天模式
                 st.rerun()
                 
-            except Exception as e:
-                thought_container.update(label="发生错误", state="error")
-                st.error(f"Error: {e}")
+    # 场景 B: 已有文档 -> 显示聊天界面
+    else:
+        doc_title = artifact['doc_title']
+        full_content = artifact['doc_content']
+        qa_pairs_history = artifact['qa_pairs'] # 这是一个 List[str]
+        
+        # --- 顶部：文档状态栏 ---
+        with st.expander(f"📄 当前文档: {doc_title} (点击查看全文)", expanded=False):
+            st.text_area("文档内容", full_content, height=200, disabled=True)
+            # 提供一个重新上传的入口（可选）
+            if st.button("⚠️ 替换文档 (这将清空当前推理记忆)"):
+                # 这里的逻辑可以是清空 artifact，或者跳转回上传页
+                # 简单做法：清空 artifact table 该行
+                # delete_session_artifact(current_session_id) # 需要实现这个函数
+                pass 
+
+        # --- 聊天区域 ---
+        
+        # 1. 加载消息历史 (从 messages 表)
+        messages = get_messages(current_session_id)
+        
+        # 渲染历史消息
+        for msg in messages:
+            with st.chat_message(msg["role"]):
+                # 如果是 AI 的消息，且包含 thoughts (我们需要一种方式存储 thoughts)
+                # 简单方案：thoughts 直接拼在 content 里，用特定标记分隔，渲染时拆分
+                # 或者：只显示最终结果，Deep QA 的过程比较长，不建议存 DB 太乱
+                # 这里我们假设 messages 表里存的是最终展示用的 markdown
+                format_display_message(msg["content"]) # 复用之前的格式化函数支持 tooltip
+
+        # 2. 输入区域
+        user_input = st.chat_input("针对文档提问...")
+        
+        # 3. 处理逻辑
+        if user_input:
+            # 显示用户消息
+            with st.chat_message("user"):
+                st.markdown(user_input)
+            
+            # 存入 DB
+            add_message(current_session_id, "user", user_input)
+            
+            # 构造 Agent State
+            # 关键：从 artifact 中恢复 qa_pairs，这样 Agent 就有记忆了！
+            initial_state = {
+                "messages": [], # 这里放 Graph 需要的消息，通常为空即可，主要靠 qa_pairs
+                "full_content": full_content,
+                "doc_title": doc_title,
+                "user_goal": user_input,
+                "qa_pairs": qa_pairs_history, # <--- 注入记忆
+                "loop_count": 0,
+                "current_question": "",
+                "final_report": "",
+                "suggested_questions": []
+            }
+            
+            with st.chat_message("assistant"):
+                status_box = st.status("🕵️‍♂️ DeepSeek 正在深度查证...", expanded=True)
+                response_placeholder = st.empty()
+                full_response = ""
+                thought_log = ""
+                
+                try:
+                    # 运行 Graph
+                    final_qa_pairs = qa_pairs_history # 默认它是旧的，等运行完更新
+                    
+                    for step in deep_qa_graph.stream(initial_state, config={"recursion_limit": 50}):
+                        for node, update in step.items():
+                            
+                            # 获取最新的 qa_pairs (如果有更新)
+                            if "qa_pairs" in update:
+                                final_qa_pairs = update["qa_pairs"]
+                            
+                            if node == "QAPlanner":
+                                q = update.get("current_question")
+                                if q:
+                                    msg = f"🤔 **规划**: 需要查证 `{q}`"
+                                    status_box.write(msg)
+                                    thought_log += f"\n\n> {msg}"
+                                else:
+                                    status_box.write("✅ **规划**: 信息充足，开始汇总。")
+
+                            elif node == "Researcher":
+                                # 取最新的一条展示
+                                pairs = update.get("qa_pairs", [])
+                                if pairs:
+                                    latest = pairs[-1]
+                                    if "**A**:" in latest:
+                                        a_text = latest.split("**A**:")[1][:50] + "..."
+                                        status_box.write(f"📚 **查证**: {a_text}")
+                                        thought_log += f"\n\n> 📚 **查证**: {latest}"
+
+                            elif node == "QAWriter":
+                                full_response = update.get("final_report", "")
+                                
+                            elif node == "Suggester":
+                                suggestions = update.get("suggested_questions", [])
+                                if suggestions:
+                                    full_response += "\n\n---\n👉 **建议追问：**\n"
+                                    for s in suggestions:
+                                        full_response += f"- {s}\n"
+
+                    # 运行结束
+                    status_box.update(label="完成", state="complete", expanded=False)
+                    
+                    # 拼接思考过程 (作为折叠块)
+                    if thought_log:
+                        final_content_to_show = f"{full_response}\n\n<details><summary>🧠 思考过程</summary>{thought_log}</details>"
+                    else:
+                        final_content_to_show = full_response
+                        
+                    response_placeholder.markdown(final_content_to_show, unsafe_allow_html=True)
+                    
+                    # 4. 数据持久化
+                    # (A) 保存 AI 回复到 messages 表
+                    add_message(current_session_id, "assistant", final_content_to_show)
+                    
+                    # (B) 更新 qa_pairs 到 artifacts 表
+                    update_session_qa_pairs(current_session_id, final_qa_pairs)
+                    
+                    # 刷新以显示新消息
+                    st.rerun()
+                    
+                except Exception as e:
+                    status_box.update(label="发生错误", state="error")
+                    st.error(f"Error: {e}")
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
