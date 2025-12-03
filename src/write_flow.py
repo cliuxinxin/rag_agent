@@ -138,15 +138,7 @@ def report_node(state: WriterState) -> dict:
     return {"research_report": report, "next": "Outliner"}
 
 def outline_node(state: WriterState) -> dict:
-    """大纲生成器：如果是“更新调研”模式，则跳过生成大纲，保留原有大纲"""
-    current_outline = state.get("current_outline", [])
-    # 如果已经有大纲，且我们只是来重新调研的（比如修改了大纲触发的），则不再覆盖大纲
-    # 或者我们设计一个 flag。这里简单逻辑：如果 outline 为空，则生成；否则只更新报告就结束。
-    
-    # 但是，用户可能希望“根据调研报告优化现有大纲”。
-    # 这里我们采取策略：始终根据报告生成一个【建议大纲】，前端让用户决定是否采用，或者覆盖。
-    # 为了简化流程，假设这里是“生成/重置大纲”。
-    
+    """大纲生成器：增强容错能力"""
     req = state["user_requirement"]
     report = state["research_report"]
     
@@ -156,19 +148,39 @@ def outline_node(state: WriterState) -> dict:
     基于调研报告，设计文章大纲。
     
     【需求】{req}
-    【报告】{report}
+    【报告】{report[:3000]} 
     
-    请输出 JSON 格式（List[Dict]），包含 title, desc (详细指导)。
+    请输出严格的 JSON 格式（List[Dict]），包含 title, desc。
+    不要输出任何 Markdown 标记（如 ```json），只输出纯 JSON 文本。
+    
+    示例格式：
+    [
+        {{"title": "第一章：...", "desc": "..."}},
+        {{"title": "第二章：...", "desc": "..."}}
+    ]
     """
     
     res = llm.invoke([HumanMessage(content=prompt)]).content
-    clean_json = res.replace("```json", "").replace("```", "").strip()
     
-    try:
-        new_outline = json.loads(clean_json)
-    except:
-        new_outline = [{"title": "Error", "desc": "JSON Parsing Failed"}]
-        
+    # === 增强清洗逻辑 ===
+    clean_json = res.replace("```json", "").replace("```", "").strip()
+    # 有时候 LLM 会在开头加 "Here is the json..."，我们要尝试找到第一个 [
+    start_idx = clean_json.find("[")
+    end_idx = clean_json.rfind("]")
+    
+    new_outline = []
+    
+    if start_idx != -1 and end_idx != -1:
+        clean_json = clean_json[start_idx : end_idx + 1]
+        try:
+            new_outline = json.loads(clean_json)
+        except json.JSONDecodeError as e:
+            print(f"JSON Parse Error: {e}")
+            # 降级策略：如果解析失败，创建一个单章提示
+            new_outline = [{"title": "大纲解析失败", "desc": f"原始内容：{clean_json[:100]}..."}]
+    else:
+         new_outline = [{"title": "生成格式错误", "desc": "AI 未返回有效的 JSON 格式。"}]
+
     return {"current_outline": new_outline, "next": "END"}
 
 # ==========================================

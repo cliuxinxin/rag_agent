@@ -658,6 +658,70 @@ def render_deep_writing_mode():
                         st.session_state.current_project_id = None
                     st.rerun()
 
+    # === 新增：处理流式输出的函数 ===
+    def run_research_agent_with_stream(initial_state, project_id):
+        """
+        运行调研 Agent 并展示可视化过程
+        """
+        # 创建一个状态容器
+        status_container = st.status("🚀 AI 正在启动深度调研工作流...", expanded=True)
+        
+        final_report = ""
+        final_outline = []
+        
+        try:
+            # 使用 stream 模式，recursion_limit 防止死循环
+            for step in research_graph.stream(initial_state, config={"recursion_limit": 50}):
+                
+                # 遍历每一个正在运行的节点
+                for node_name, update in step.items():
+                    
+                    # --- 1. 规划阶段 ---
+                    if node_name == "Planner":
+                        plans = update.get("planning_steps", [])
+                        if plans:
+                            latest_plan = plans[-1]
+                            status_container.write(f"🤔 **Planner (规划师)**: 制定了新的调研方向\n> {latest_plan}")
+                    
+                    # --- 2. 搜索阶段 ---
+                    elif node_name == "Researcher":
+                        notes = update.get("research_notes", [])
+                        if notes:
+                            # 只显示最新的一条笔记片段
+                            latest_note = notes[-1][:100] + "..."
+                            status_container.write(f"🔎 **Researcher (研究员)**: 查到了资料\n> {latest_note}")
+                    
+                    # --- 3. 循环检查 ---
+                    elif node_name == "PlanCheck":
+                        loop = update.get("loop_count", 0)
+                        status_container.write(f"🔄 **System**: 当前调研轮次 {loop}/3")
+
+                    # --- 4. 报告生成 ---
+                    elif node_name == "ReportGenerator":
+                        final_report = update.get("research_report", "")
+                        status_container.write("📝 **Writer**: 正在汇总《深度调研报告》...")
+
+                    # --- 5. 大纲生成 ---
+                    elif node_name == "Outliner":
+                        final_outline = update.get("current_outline", [])
+                        status_container.write("📋 **Outliner**: 正在构建文章结构...")
+
+            # 运行结束
+            status_container.update(label="✅ 大纲生成完成！", state="complete", expanded=False)
+            
+            # === 关键修复：立即保存到数据库 ===
+            if final_outline:
+                update_project_outline(project_id, final_outline, final_report)
+                return True # 标记成功
+            else:
+                status_container.update(label="❌ 生成失败：大纲为空", state="error")
+                return False
+
+        except Exception as e:
+            status_container.update(label="❌ 发生错误", state="error")
+            st.error(f"Error details: {e}")
+            return False
+
     # === 主区域逻辑 ===
     
     # 场景 1: 新建项目
@@ -692,40 +756,37 @@ def render_deep_writing_mode():
         
         start_disabled = not (title and req and (kb_names or source_data))
         
-        if st.button("🚀 生成大纲", type="primary", disabled=start_disabled):
-            with st.spinner("正在生成大纲..."):
-                # 创建项目
-                project_id = create_writing_project(
-                    title=title,
-                    requirements=req,
-                    source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                    source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data
-                )
-                
-                # 准备初始状态
-                initial_state = {
-                    "project_id": project_id,
-                    "user_requirement": req,
-                    "source_type": "kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                    "source_data": json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
-                    "planning_steps": [],
-                    "research_notes": [],
-                    "research_report": "",
-                    "current_outline": [],
-                    "loop_count": 0,
-                    "next": "Planner"
-                }
-                
-                # 运行图生成大纲
-                for step in research_graph.stream(initial_state):
-                    pass  # 图会自动运行直到结束
-                
-                # 获取结果并保存
-                final_state = initial_state
-                update_project_outline(project_id, final_state["current_outline"], final_state["research_report"])
-                
-                # 设置当前项目ID并刷新页面
-                st.session_state.current_project_id = project_id
+        # 场景 A: 新建项目时的"生成大纲"按钮
+        if st.button("✨ 生成大纲", type="primary", disabled=start_disabled):
+            # 1. 先创建项目占位
+            pid = create_writing_project(
+                title=title,
+                requirements=req,
+                source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
+                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data
+            )
+            st.session_state.current_project_id = pid
+            
+            # 2. 准备初始状态
+            initial_state = {
+                "project_id": pid,
+                "user_requirement": req,
+                "source_type": "kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
+                "source_data": json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
+                "planning_steps": [],
+                "research_notes": [],
+                "research_report": "",
+                "current_outline": [],
+                "loop_count": 0,
+                "next": "Planner"
+            }
+            
+            # 3. 运行流式处理
+            success = run_research_agent_with_stream(initial_state, pid)
+            
+            # 4. 刷新页面以显示结果
+            if success:
+                time.sleep(1) # 稍作停顿让用户看到完成状态
                 st.rerun()
     
     # 场景 2: 编辑现有项目
@@ -769,31 +830,26 @@ def render_deep_writing_mode():
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
         
+        # 场景 B: 现有项目 Tab 1 里的"重新生成大纲"按钮
         with col1:
             if st.button("🔄 重新生成大纲"):
-                with st.spinner("重新生成大纲..."):
-                    # 准备状态
-                    initial_state = {
-                        "project_id": project_id,
-                        "user_requirement": project['requirements'],
-                        "source_type": project['source_type'],
-                        "source_data": project['source_data'],
-                        "planning_steps": [],
-                        "research_notes": [],
-                        "research_report": project['research_report'] or "",
-                        "current_outline": [],
-                        "loop_count": 0,
-                        "next": "Planner"
-                    }
-                    
-                    # 运行图生成大纲
-                    for step in research_graph.stream(initial_state):
-                        pass
-                    
-                    # 保存新大纲
-                    final_state = initial_state
-                    update_project_outline(project_id, final_state["current_outline"], final_state["research_report"])
-                    
+                # 准备状态
+                initial_state = {
+                    "project_id": project_id,
+                    "user_requirement": project['requirements'],
+                    "source_type": project['source_type'],
+                    "source_data": project['source_data'],
+                    "planning_steps": [],
+                    "research_notes": [],
+                    "research_report": project['research_report'] or "",
+                    "current_outline": [],
+                    "loop_count": 0,
+                    "next": "Planner"
+                }
+                
+                # 运行流式处理
+                success = run_research_agent_with_stream(initial_state, project_id)
+                if success:
                     st.rerun()
         
         with col2:
