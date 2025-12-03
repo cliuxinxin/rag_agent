@@ -76,3 +76,24 @@ class AgentState(TypedDict):
     # 每一轮 Searcher 会把"这一轮我发现了什么重要信息"记在这里
     # 格式建议： "Round 1 (Topic): Found X, Y, Z."
     research_notes: Annotated[List[str], add_strings]
+
+# === [新增] 深度写作状态 ===
+class WriterState(TypedDict):
+    # === 输入 ===
+    project_id: str
+    user_requirement: str    # 用户的写作要求
+    source_content: str      # 上传的文本或文件全文
+    kb_names: List[str]      # 选中的知识库列表
+    
+    # === 过程 ===
+    research_summary: str    # 调研总结
+    current_outline: List[dict] # 大纲结构 [{"title": "...", "desc": "...", "content": "..."}]
+    
+    # === 修改大纲专用 ===
+    edit_instruction: str    # 用户修改大纲的指令
+    
+    # === 正文生成专用 ===
+    current_section_index: int # 当前正在写哪一章
+    generated_section_content: str # 最近生成的一章内容
+    
+    next: str

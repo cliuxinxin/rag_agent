@@ -59,6 +59,26 @@ def init_db():
         FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )
     ''')
+    
+    # === [新增] 深度写作项目表 ===
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS writing_projects (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        
+        -- 配置信息
+        requirements TEXT,     -- 用户输入的需求/Prompt
+        source_type TEXT,      -- "kb", "file", "text"
+        source_data TEXT,      -- 知识库名 或 文件内容
+        
+        -- 生成内容
+        research_report TEXT,  -- 调研报告 (Markdown)
+        outline_data TEXT,     -- 大纲结构 (JSON)
+        full_draft TEXT        -- 最终生成的正文 (Markdown)
+    )
+    ''')
 
     conn.commit()
     conn.close()
@@ -209,5 +229,74 @@ def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
     c = conn.cursor()
     qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
     c.execute("UPDATE session_artifacts SET qa_pairs = ? WHERE session_id = ?", (qa_pairs_json, session_id))
+    conn.commit()
+    conn.close()
+
+# === [新增] 写作项目 CRUD 函数 ===
+
+def create_writing_project(title: str, requirements: str, source_type: str, source_data: str) -> str:
+    project_id = str(uuid.uuid4())
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO writing_projects (id, title, requirements, source_type, source_data, outline_data, full_draft)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (project_id, title, requirements, source_type, source_data, "[]", ""))
+    conn.commit()
+    conn.close()
+    return project_id
+
+def get_writing_project(project_id: str) -> Optional[Dict]:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM writing_projects WHERE id = ?", (project_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        data = dict(row)
+        # 尝试解析 outline_data
+        try:
+            data['outline_data'] = json.loads(data['outline_data'])
+        except:
+            data['outline_data'] = []
+        return data
+    return None
+
+def update_project_outline(project_id: str, outline_data: List[Dict], research_report: str = None):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    outline_json = json.dumps(outline_data, ensure_ascii=False)
+    
+    if research_report:
+        c.execute("UPDATE writing_projects SET outline_data = ?, research_report = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (outline_json, research_report, project_id))
+    else:
+        c.execute("UPDATE writing_projects SET outline_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (outline_json, project_id))
+    conn.commit()
+    conn.close()
+
+def update_project_draft(project_id: str, full_draft: str):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("UPDATE writing_projects SET full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+              (full_draft, project_id))
+    conn.commit()
+    conn.close()
+
+def get_all_projects() -> List[Dict]:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT id, title, created_at FROM writing_projects ORDER BY updated_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def delete_project(project_id: str):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("DELETE FROM writing_projects WHERE id = ?", (project_id,))
     conn.commit()
     conn.close()

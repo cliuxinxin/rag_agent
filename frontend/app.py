@@ -22,13 +22,19 @@ from src.db import init_db, create_session, get_all_sessions, get_messages, add_
 from src.db import save_report, get_all_reports, get_report_content, delete_report
 # 引入新的 DB 函数
 from src.db import save_session_artifact, get_session_artifact, update_session_qa_pairs
+# 引入新的 DB 函数 (写作模式)
+from src.db import create_writing_project, get_writing_project, update_project_outline, update_project_draft, get_all_projects, delete_project
 # 引入 LLM 获取函数用于生成标题
 from src.nodes import get_llm
 # 引入深度解读模块
 from src.deep_flow import deep_graph, deep_qa_graph
+# 引入深度写作模块
+from src.write_flow import outline_graph, refine_graph, writing_graph
 # 引入 TextLoader 和 PyPDFLoader 仅用于提取文本，不做切片
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 import tempfile
+import json  # 用于处理 JSON 数据
+import time  # 用于添加延迟
 
 load_dotenv()
 st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide", page_icon="🕵️‍♂️")
@@ -626,6 +632,234 @@ def render_deep_qa_mode():
                     status_box.update(label="发生错误", state="error")
                     st.error(f"Error: {e}")
 
+# === 新增：深度写作模式 ===
+def render_deep_writing_mode():
+    st.title("✍️ 深度写作助手")
+    
+    # === 侧边栏：项目列表 ===
+    with st.sidebar:
+        st.subheader("📂 写作项目")
+        if st.button("➕ 新建写作项目", use_container_width=True):
+            st.session_state.current_project_id = None
+            st.rerun()
+            
+        st.markdown("---")
+        projects = get_all_projects()
+        for p in projects:
+            c1, c2 = st.columns([5, 1])
+            with c1:
+                if st.button(f"📄 {p['title']}", key=f"proj_{p['id']}", use_container_width=True):
+                    st.session_state.current_project_id = p['id']
+                    st.rerun()
+            with c2:
+                if st.button("🗑️", key=f"del_proj_{p['id']}"):
+                    delete_project(p['id'])
+                    if st.session_state.get("current_project_id") == p['id']:
+                        st.session_state.current_project_id = None
+                    st.rerun()
+
+    # === 主区域逻辑 ===
+    
+    # 场景 1: 新建项目
+    if not st.session_state.get("current_project_id"):
+        st.subheader("🚀 开始新的写作")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            title = st.text_input("项目标题", placeholder="例如：2025年AI行业发展报告")
+        
+        req = st.text_area("写作需求/Prompt", height=150, placeholder="例如：写一篇关于 DeepSeek 技术的深度分析文章，受众是技术人员，风格专业严谨。")
+        
+        source_type = st.radio("参考资料来源", ["知识库 (KB)", "直接粘贴文本", "上传文件"], horizontal=True)
+        
+        kb_names = []
+        source_data = ""
+        
+        if source_type == "知识库 (KB)":
+            all_kbs = list_kbs()
+            if not all_kbs:
+                st.warning("暂无可用知识库，请先创建。")
+            else:
+                kb_names = st.multiselect("选择知识库", all_kbs)
+                
+        elif source_type == "直接粘贴文本":
+            source_data = st.text_area("粘贴文本内容", height=200)
+            
+        elif source_type == "上传文件":
+            uploaded_file = st.file_uploader("上传 PDF 或 TXT 文档", type=["pdf", "txt"])
+            if uploaded_file:
+                source_data = load_file_content(uploaded_file)
+        
+        start_disabled = not (title and req and (kb_names or source_data))
+        
+        if st.button("🚀 生成大纲", type="primary", disabled=start_disabled):
+            with st.spinner("正在生成大纲..."):
+                # 创建项目
+                project_id = create_writing_project(
+                    title=title,
+                    requirements=req,
+                    source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
+                    source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data
+                )
+                
+                # 准备初始状态
+                initial_state = {
+                    "project_id": project_id,
+                    "user_requirement": req,
+                    "source_content": source_data if source_type != "知识库 (KB)" else "",
+                    "kb_names": kb_names if source_type == "知识库 (KB)" else [],
+                    "research_summary": "",
+                    "current_outline": [],
+                    "next": "Researcher"
+                }
+                
+                # 运行图生成大纲
+                for step in outline_graph.stream(initial_state):
+                    pass  # 图会自动运行直到结束
+                
+                # 获取结果并保存
+                final_state = initial_state
+                update_project_outline(project_id, final_state["current_outline"], final_state["research_summary"])
+                
+                # 设置当前项目ID并刷新页面
+                st.session_state.current_project_id = project_id
+                st.rerun()
+    
+    # 场景 2: 编辑现有项目
+    else:
+        project_id = st.session_state.current_project_id
+        project = get_writing_project(project_id)
+        
+        if not project:
+            st.error("项目不存在")
+            st.session_state.current_project_id = None
+            st.rerun()
+            return
+            
+        st.subheader(f"📝 {project['title']}")
+        
+        # 显示调研报告
+        if project['research_report']:
+            with st.expander("🔍 调研报告", expanded=False):
+                st.markdown(project['research_report'])
+        
+        # 大纲编辑区域
+        st.markdown("### 📋 文章大纲")
+        
+        outline_data = project['outline_data']
+        
+        # 显示当前大纲
+        if outline_data:
+            for i, section in enumerate(outline_data):
+                with st.container(border=True):
+                    st.markdown(f"#### {i+1}. {section['title']}")
+                    st.markdown(f"*{section['desc']}*")
+                    
+                    # 显示已生成的内容（如果有）
+                    if section.get('content'):
+                        with st.expander("已生成内容（点击展开）"):
+                            st.markdown(section['content'])
+        else:
+            st.info("暂无大纲，请先生成。")
+        
+        # 大纲操作
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 重新生成大纲"):
+                with st.spinner("重新生成大纲..."):
+                    # 准备状态
+                    initial_state = {
+                        "project_id": project_id,
+                        "user_requirement": project['requirements'],
+                        "source_content": project['source_data'] if project['source_type'] != 'kb' else "",
+                        "kb_names": json.loads(project['source_data']) if project['source_type'] == 'kb' else [],
+                        "research_summary": project['research_report'] or "",
+                        "current_outline": [],
+                        "next": "OutlineGenerator"
+                    }
+                    
+                    # 运行图生成大纲
+                    for step in outline_graph.stream(initial_state):
+                        pass
+                    
+                    # 保存新大纲
+                    final_state = initial_state
+                    update_project_outline(project_id, final_state["current_outline"], final_state["research_summary"])
+                    
+                    st.rerun()
+        
+        with col2:
+            edit_instruction = st.text_area("修改指令", placeholder="例如：增加一个关于未来趋势的章节", height=100)
+            if st.button("✏️ 修改大纲") and edit_instruction:
+                with st.spinner("修改大纲中..."):
+                    # 准备状态
+                    initial_state = {
+                        "project_id": project_id,
+                        "current_outline": outline_data,
+                        "edit_instruction": edit_instruction,
+                        "next": "Refiner"
+                    }
+                    
+                    # 运行图修改大纲
+                    for step in refine_graph.stream(initial_state):
+                        pass
+                    
+                    # 保存修改后的大纲
+                    final_state = initial_state
+                    update_project_outline(project_id, final_state["current_outline"])
+                    
+                    st.rerun()
+        
+        with col3:
+            if st.button("📄 生成完整文章"):
+                with st.spinner("生成完整文章中..."):
+                    full_draft = ""
+                    outline_data = project['outline_data']
+                    
+                    # 逐章生成内容
+                    for i, section in enumerate(outline_data):
+                        # 准备状态
+                        initial_state = {
+                            "project_id": project_id,
+                            "user_requirement": project['requirements'],
+                            "source_content": project['source_data'] if project['source_type'] != 'kb' else "",
+                            "kb_names": json.loads(project['source_data']) if project['source_type'] == 'kb' else [],
+                            "research_summary": project['research_report'] or "",
+                            "current_outline": outline_data,
+                            "current_section_index": i,
+                            "generated_section_content": "",
+                            "next": "Writer"
+                        }
+                        
+                        # 运行图生成章节
+                        for step in writing_graph.stream(initial_state):
+                            pass
+                        
+                        # 获取生成的内容
+                        section_content = initial_state["generated_section_content"]
+                        full_draft += f"## {section['title']}\n\n{section_content}\n\n"
+                        
+                        # 更新大纲中的章节内容
+                        outline_data[i]["content"] = section_content
+                        update_project_outline(project_id, outline_data)
+                        
+                        # 短暂延迟避免API过载
+                        time.sleep(1)
+                    
+                    # 保存完整草稿
+                    update_project_draft(project_id, full_draft)
+                    
+                    st.success("文章生成完成！")
+                    st.rerun()
+        
+        # 显示完整草稿（如果有）
+        if project['full_draft']:
+            st.markdown("---")
+            st.markdown("### 📄 完整草稿")
+            st.markdown(project['full_draft'])
+
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
     st.header("📂 知识库管理")
@@ -909,7 +1143,7 @@ def main():
         
         with st.sidebar:
             st.title("DeepSeek RAG")
-            page = st.radio("导航", ["💬 对话", "🧠 深度解读", "❓ 深度追问", "⚙️ 知识库"], index=0)
+            page = st.radio("导航", ["💬 对话", "🧠 深度解读", "❓ 深度追问", "✍️ 深度写作", "⚙️ 知识库"], index=0)
         
         if page == "💬 对话":
             render_chat()
@@ -917,6 +1151,8 @@ def main():
             render_deep_read_mode()
         elif page == "❓ 深度追问":
             render_deep_qa_mode()
+        elif page == "✍️ 深度写作":
+            render_deep_writing_mode()
         else:
             render_kb_management()
     elif st.session_state["authentication_status"] is False:
