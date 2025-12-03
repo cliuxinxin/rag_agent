@@ -275,7 +275,7 @@ def build_drafting_graph():
 # 新增：大纲修改节点
 def outline_refiner_node(state: WriterState) -> dict:
     current_outline = state["current_outline"]
-    instruction = state["edit_instruction"]
+    instruction = state.get("edit_instruction", "")
     
     llm = get_llm()
     

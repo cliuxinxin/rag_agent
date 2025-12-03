@@ -93,6 +93,9 @@ class WriterState(TypedDict):
     # === 大纲阶段 ===
     current_outline: List[dict] # JSON 结构的大纲
     
+    # === 大纲修改指令 ===
+    edit_instruction: str       # 存储大纲修改指令
+    
     # === 写作迭代阶段 ===
     full_draft: str             # 已生成的全文（用于上下文回顾）
     current_section_index: int  # 当前正在写的章节索引

@@ -9,6 +9,7 @@ import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import markdown
 
 # 添加 src 路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -731,9 +732,18 @@ def render_deep_writing_mode():
         try:
             initial_state = {
                 "current_outline": current_outline,
-                "edit_instruction": instruction,
-                # 补全其他字段防止报错
-                "project_id": project_id, "user_requirement": "", "source_type": "", "source_data": ""
+                "edit_instruction": instruction, # <--- 关键：必须传入这个参数
+                # 补全其他字段防止校验报错
+                "project_id": project_id, 
+                "user_requirement": "", 
+                "source_type": "", 
+                "source_data": "",
+                "research_report": "",  # 补全
+                "full_draft": "",       # 补全
+                "current_section_index": 0,
+                "loop_count": 0,
+                "planning_steps": [],
+                "research_notes": []
             }
             
             # 运行图
@@ -744,14 +754,12 @@ def render_deep_writing_mode():
                         status_box.write("✅ 结构调整完成，正在校验格式...")
             
             status_box.update(label="大纲修改完成！", state="complete", expanded=False)
-            
-            # 保存并刷新
             update_project_outline(project_id, new_outline, "")
             return True
             
         except Exception as e:
             status_box.update(label="修改失败", state="error")
-            st.error(f"Error: {e}")
+            st.error(f"Error details: {e}") # 打印详细错误方便调试
             return False
 
     # === 主区域逻辑 ===
@@ -1010,6 +1018,95 @@ def render_deep_writing_mode():
         #     st.markdown("---")
         #     st.markdown("### 📄 完整草稿")
         #     st.markdown(project['full_draft'])
+        
+        st.markdown("---")
+        
+        # --- 全文预览与导出 ---
+        st.markdown("### 📄 全文预览")
+        
+        # 1. 拼接全文
+        outline = project['outline_data']
+        title = project['title']
+        
+        # 拼接 Markdown 文本
+        full_markdown = f"# {title}\n\n"
+        # 如果有引言/摘要，可以在这里加
+        # full_markdown += f"> 摘要：...\n\n"
+        
+        for sec in outline:
+            content = sec.get('content', '')
+            if content:
+                full_markdown += f"## {sec['title']}\n\n"
+                full_markdown += f"{content}\n\n"
+        
+        # 2. 渲染预览
+        with st.container(border=True):
+            st.markdown(full_markdown)
+        
+        st.markdown("---")
+        st.subheader("📥 导出文档")
+        
+        col_dl_1, col_dl_2 = st.columns(2)
+        
+        # 选项 A: 下载 Markdown (原生支持)
+        with col_dl_1:
+            st.download_button(
+                label="📄 下载 Markdown 源码",
+                data=full_markdown,
+                file_name=f"{title}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+        
+        # 选项 B: 导出为 HTML (用于打印 PDF)
+        # 我们构建一个包含 CSS 样式的 HTML 模板，确保打印好看
+        def create_html_content(md_text, doc_title):
+            import markdown
+            html_body = markdown.markdown(md_text)
+            
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>{doc_title}</title>
+                <style>
+                    body {{
+                        font-family: "Microsoft YaHei", "SimHei", -apple-system, sans-serif;
+                        max-width: 800px;
+                        margin: 0 auto;
+                        padding: 40px;
+                        line-height: 1.8;
+                        color: #333;
+                    }}
+                    h1 {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #eaeaea; padding-bottom: 20px; }}
+                    h2 {{ color: #2980b9; margin-top: 30px; border-left: 5px solid #2980b9; padding-left: 10px; }}
+                    p {{ margin-bottom: 15px; text-align: justify; }}
+                    code {{ background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }}
+                    pre {{ background: #f8f8f8; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+                    /* 打印样式优化 */
+                    @media print {{
+                        body {{ max-width: 100%; padding: 0; }}
+                        h2 {{ page-break-before: always; }}  /* 章节强制换页，可选 */
+                    }}
+                </style>
+            </head>
+            <body>
+                {html_body}
+            </body>
+            </html>
+            """
+        
+        with col_dl_2:
+            html_content = create_html_content(full_markdown, title)
+            st.download_button(
+                label="🖨️ 导出为 HTML (推荐转 PDF)",
+                data=html_content,
+                file_name=f"{title}.html",
+                mime="text/html",
+                help="下载后在浏览器打开，使用 Ctrl+P (打印) -> 另存为 PDF，效果最佳。",
+                use_container_width=True
+            )
         
         st.markdown("---")
         
