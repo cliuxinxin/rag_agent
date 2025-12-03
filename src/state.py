@@ -79,21 +79,25 @@ class AgentState(TypedDict):
 
 # === [新增] 深度写作状态 ===
 class WriterState(TypedDict):
-    # === 输入 ===
+    # === 基础配置 ===
     project_id: str
-    user_requirement: str    # 用户的写作要求
-    source_content: str      # 上传的文本或文件全文
-    kb_names: List[str]      # 选中的知识库列表
+    user_requirement: str        # 用户需求
+    kb_names: List[str]          # 知识库
+    source_content: str          # 原始素材 (Context Caching)
     
-    # === 过程 ===
-    research_summary: str    # 调研总结
-    current_outline: List[dict] # 大纲结构 [{"title": "...", "desc": "...", "content": "..."}]
+    # === Agent 思考循环 (Planner -> Researcher) ===
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    loop_count: int
+    current_question: str        # 当前调研的问题
+    qa_pairs: Annotated[List[str], add_strings] # 积累的知识点
     
-    # === 修改大纲专用 ===
-    edit_instruction: str    # 用户修改大纲的指令
+    # === 核心产物 ===
+    research_report: str         # 调研报告 (Markdown)
+    current_outline: List[dict]  # 大纲 (JSON)
     
-    # === 正文生成专用 ===
-    current_section_index: int # 当前正在写哪一章
-    generated_section_content: str # 最近生成的一章内容
+    # === 正文生成 ===
+    current_section_index: int   # 当前写第几章
+    generated_content: str       # 已生成的全文 (用于上下文连贯)
+    current_section_draft: str   # 当前这一章生成的草稿
     
     next: str
