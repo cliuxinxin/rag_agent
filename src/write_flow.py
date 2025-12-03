@@ -272,6 +272,64 @@ def build_drafting_graph():
     wf.add_edge("Writer", END)
     return wf.compile()
 
+# 新增：大纲修改节点
+def outline_refiner_node(state: WriterState) -> dict:
+    current_outline = state["current_outline"]
+    instruction = state["edit_instruction"]
+    
+    llm = get_llm()
+    
+    # 转换为字符串以便 LLM 理解上下文
+    outline_str = json.dumps(current_outline, ensure_ascii=False, indent=2)
+    
+    prompt = f"""
+    你是一个专业的主编。请根据修改指令调整文章大纲。
+    
+    【当前大纲】
+    {outline_str}
+    
+    【修改指令】
+    {instruction}
+    
+    【任务要求】
+    1. 请严格输出修改后的 JSON 数据（List[Dict]）。
+    2. 保持 JSON 结构包含：title, desc, content (保持原样或为空)。
+    3. 严禁输出 Markdown 标记（如 ```json），只输出纯 JSON。
+    4. 如果是增加章节，请生成合理的 desc。
+    """
+    
+    res = llm.invoke([HumanMessage(content=prompt)]).content
+    
+    # === 增强清洗逻辑 (关键修复) ===
+    clean_json = res.replace("```json", "").replace("```", "").strip()
+    
+    # 尝试寻找 JSON 数组的边界
+    start_idx = clean_json.find("[")
+    end_idx = clean_json.rfind("]")
+    
+    if start_idx != -1 and end_idx != -1:
+        clean_json = clean_json[start_idx : end_idx + 1]
+        try:
+            new_outline = json.loads(clean_json)
+        except json.JSONDecodeError:
+            # 解析失败，回退到原大纲，避免清空数据
+            print("Refine JSON Error, rollback.")
+            new_outline = current_outline
+    else:
+        # 格式错误，回退
+        new_outline = current_outline
+        
+    return {"current_outline": new_outline, "next": "END"}
+
+# 3. 大纲修改图 (Outline Refinement Flow)
+def build_refine_graph():
+    wf = StateGraph(WriterState)
+    wf.add_node("Refiner", outline_refiner_node)
+    wf.set_entry_point("Refiner")
+    wf.add_edge("Refiner", END)
+    return wf.compile()
+
 # 导出
 research_graph = build_research_graph()
 drafting_graph = build_drafting_graph()
+refine_graph = build_refine_graph()
