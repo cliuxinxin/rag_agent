@@ -81,23 +81,23 @@ class AgentState(TypedDict):
 class WriterState(TypedDict):
     # === 基础配置 ===
     project_id: str
-    user_requirement: str        # 用户需求
-    kb_names: List[str]          # 知识库
-    source_content: str          # 原始素材 (Context Caching)
+    user_requirement: str      # 原始需求
+    source_type: str           # "kb", "file", "text"
+    source_data: Any           # 知识库列表 or 文本内容
     
-    # === Agent 思考循环 (Planner -> Researcher) ===
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    loop_count: int
-    current_question: str        # 当前调研的问题
-    qa_pairs: Annotated[List[str], add_strings] # 积累的知识点
+    # === 调研阶段 (Agent 规划与执行) ===
+    planning_steps: List[str]  # Planner 生成的调研计划
+    research_notes: List[str]  # 积累的调研片段 (Raw Data)
+    research_report: str       # 最终生成的《深度调研报告》
     
-    # === 核心产物 ===
-    research_report: str         # 调研报告 (Markdown)
-    current_outline: List[dict]  # 大纲 (JSON)
+    # === 大纲阶段 ===
+    current_outline: List[dict] # JSON 结构的大纲
     
-    # === 正文生成 ===
-    current_section_index: int   # 当前写第几章
-    generated_content: str       # 已生成的全文 (用于上下文连贯)
-    current_section_draft: str   # 当前这一章生成的草稿
+    # === 写作迭代阶段 ===
+    full_draft: str             # 已生成的全文（用于上下文回顾）
+    current_section_index: int  # 当前正在写的章节索引
+    current_section_content: str # 当前章节刚生成的内容
     
+    # === 控制流 ===
+    loop_count: int             # 防止调研死循环
     next: str

@@ -7,247 +7,259 @@ from src.storage import load_kbs
 from langchain_community.retrievers import BM25Retriever
 
 # ==========================================
-# PART 1: 智能调研与大纲生成 (Agent Loop)
+# PART 1: 调研与大纲生成 Agent
 # ==========================================
 
-# 1. 写作规划师 (Planner): 决定还需要调研什么
-def write_planner_node(state: WriterState) -> dict:
+def plan_node(state: WriterState) -> dict:
+    """规划师：分析需求或现有大纲，决定需要调研什么方向"""
     req = state["user_requirement"]
-    qa_history = state.get("qa_pairs", [])
+    outline = state.get("current_outline", [])
     loop = state.get("loop_count", 0)
-    MAX_LOOPS = 3  # 写作调研不用太深，3轮足够梳理结构
     
-    llm = get_llm()
-    history_text = "\n".join(qa_history) if qa_history else "（暂无，第一轮）"
-    
-    prompt = f"""
-    你是写作筹备组的组长。
-    【写作任务】{req}
-    【已获取的信息】
-    {history_text}
-    
-    当前轮次: {loop + 1}/{MAX_LOOPS}
-    
-    请判断：为了写出一份高质量的【调研报告】和【文章大纲】，我们还需要查证什么关键信息？
-    - 比如：核心概念的定义、具体的案例、正反面观点等。
-    - 如果信息已经足够构建大纲，请输出 "TERMINATE"。
-    - 否则，输出一个具体的【调研问题】。
-    """
-    
-    response = llm.invoke([HumanMessage(content=prompt)]).content.strip().replace('"', '')
-    
-    if "TERMINATE" in response or loop >= MAX_LOOPS:
+    # 限制调研轮次（例如最多查 3 次）
+    if loop >= 3:
         return {"next": "ReportGenerator"}
-    else:
-        return {"next": "Researcher", "current_question": response, "loop_count": loop + 1}
 
-# 2. 调研员 (Researcher): 查知识库
-def write_researcher_node(state: WriterState) -> dict:
-    query = state["current_question"]
-    kb_names = state.get("kb_names", [])
-    source_content = state.get("source_content", "")
-    
     llm = get_llm()
-    context = ""
     
-    # 简单的混合检索策略
-    if kb_names:
-        docs, _ = load_kbs(kb_names)
-        if docs:
-            retriever = BM25Retriever.from_documents(docs)
-            retriever.k = 5
-            results = retriever.invoke(query)
-            context += "\n【KB Ref】\n" + "\n".join([d.page_content[:400] for d in results])
-    
-    if source_content:
-        # 如果有上传全文，这里简单处理，实际可做更复杂的切片检索
-        context += f"\n【Upload Content】\n{source_content[:2000]}..." 
+    # 如果已有大纲（说明是修改后重新调研），则基于大纲规划
+    if outline:
+        outline_str = "\n".join([f"- {item['title']}: {item['desc']}" for item in outline])
+        prompt = f"""
+        当前任务：完善写作项目的调研。
+        用户需求：{req}
+        当前大纲：
+        {outline_str}
         
-    # 让 LLM 回答问题
-    prompt = f"""
-    问题：{query}
-    资料：{context}
-    请简练回答问题，提取关键素材。
-    """
-    answer = llm.invoke([HumanMessage(content=prompt)]).content
+        请分析大纲中哪些部分缺乏事实支撑？提出 2-3 个具体的搜索关键词或问题，用于补充调研。
+        """
+    else:
+        # 第一次生成，基于需求规划
+        prompt = f"""
+        当前任务：为写作项目做前期调研。
+        用户需求：{req}
+        
+        请分析为了写好这篇文章，我们需要搜集哪些核心信息？
+        请输出 2-3 个具体的搜索关键词或方向。
+        """
+    
+    # 这里简化处理，直接让 LLM 输出关键词，实际可以做成 Structured Output
+    plan = llm.invoke([HumanMessage(content=prompt)]).content
     
     return {
-        "qa_pairs": [f"Q: {query}\nA: {answer}"],
-        "next": "Planner"
+        "planning_steps": [plan],
+        "next": "Researcher",
+        "loop_count": loop + 1
     }
 
-# 3. 报告生成器 (ReportGenerator): 汇总 QA 生成调研报告
-def report_generator_node(state: WriterState) -> dict:
+def research_node(state: WriterState) -> dict:
+    """研究员：执行搜索"""
+    source_type = state["source_type"]
+    source_data = state["source_data"]
+    plans = state.get("planning_steps", [])
+    latest_plan = plans[-1] if plans else ""
+    
+    # 1. 获取上下文（知识库检索 或 静态文本）
+    retrieved_text = ""
+    
+    if source_type == "kb":
+        # 解析 KB 列表
+        try:
+            kb_list = json.loads(source_data) if isinstance(source_data, str) else source_data
+            docs, _ = load_kbs(kb_list)
+            if docs:
+                # 基于 Plan 进行检索
+                retriever = BM25Retriever.from_documents(docs)
+                retriever.k = 5
+                # 简单提取 Plan 中的关键词进行检索
+                results = retriever.invoke(latest_plan)
+                retrieved_text = "\n".join([f"[KB Ref] {d.page_content}" for d in results])
+        except Exception as e:
+            print(f"Research Error: {e}")
+            
+    elif source_type in ["file", "text"]:
+        # 对于上传文件，全文作为上下文（如果不长），或者做简单切片检索
+        # 这里为了简单，假设 text 模式下 source_data 就是全文
+        full_text = source_data
+        if len(full_text) > 10000:
+            # 简单截断或做简单查找
+            retrieved_text = full_text[:10000] 
+        else:
+            retrieved_text = full_text
+
+    if not retrieved_text:
+        retrieved_text = "未找到相关资料。"
+
+    # 2. 总结发现
+    llm = get_llm()
+    summary_prompt = f"""
+    根据搜索计划：{latest_plan}
+    我们检索到了以下内容：
+    {retrieved_text[:3000]}
+    
+    请提取对写作有帮助的事实、数据或观点，形成一条调研笔记。
+    """
+    note = llm.invoke([HumanMessage(content=summary_prompt)]).content
+    
+    return {
+        "research_notes": state.get("research_notes", []) + [note],
+        "next": "PlanCheck" # 搜完一次，回去检查是否还需要搜
+    }
+
+def plan_check_node(state: WriterState) -> dict:
+    """简单的循环控制器"""
+    loop = state.get("loop_count", 0)
+    # 比如我们硬性规定搜 2 轮就够了
+    if loop >= 2:
+        return {"next": "ReportGenerator"}
+    return {"next": "Planner"} # 回去 Planner 继续规划
+
+def report_node(state: WriterState) -> dict:
+    """报告生成器：汇总所有笔记"""
     req = state["user_requirement"]
-    qa_history = state.get("qa_pairs", [])
+    notes = state.get("research_notes", [])
     
     llm = get_llm()
-    history_text = "\n\n".join(qa_history)
+    
+    notes_text = "\n\n".join(notes)
     
     prompt = f"""
-    请基于以下调研过程，写一份【文章策划与调研报告】。
+    你是一个高级分析师。
     
-    【任务】{req}
-    【调研素材】
-    {history_text}
+    【写作需求】{req}
+    【累计调研笔记】
+    {notes_text}
     
-    【报告要求】
-    1. **核心立意**：一句话概括文章中心思想。
-    2. **目标读者画像**。
-    3. **关键素材清单**：列出我们准备用到的核心数据、案例或观点。
-    4. **风格基调**。
-    
-    请直接输出 Markdown 格式。
+    请根据以上信息，撰写一份结构清晰的《深度调研报告》。
+    包含：核心主旨、关键论据、素材储备、建议的叙事角度。
     """
     
     report = llm.invoke([HumanMessage(content=prompt)]).content
-    return {"research_report": report, "next": "OutlineGenerator"}
+    return {"research_report": report, "next": "Outliner"}
 
-# 4. 大纲生成器 (OutlineGenerator): 基于报告生成大纲
-def outline_generator_node(state: WriterState) -> dict:
+def outline_node(state: WriterState) -> dict:
+    """大纲生成器：如果是“更新调研”模式，则跳过生成大纲，保留原有大纲"""
+    current_outline = state.get("current_outline", [])
+    # 如果已经有大纲，且我们只是来重新调研的（比如修改了大纲触发的），则不再覆盖大纲
+    # 或者我们设计一个 flag。这里简单逻辑：如果 outline 为空，则生成；否则只更新报告就结束。
+    
+    # 但是，用户可能希望“根据调研报告优化现有大纲”。
+    # 这里我们采取策略：始终根据报告生成一个【建议大纲】，前端让用户决定是否采用，或者覆盖。
+    # 为了简化流程，假设这里是“生成/重置大纲”。
+    
     req = state["user_requirement"]
     report = state["research_report"]
     
     llm = get_llm()
     
     prompt = f"""
-    基于调研报告，生成详细的文章大纲。
+    基于调研报告，设计文章大纲。
     
-    【任务】{req}
-    【调研报告】{report}
+    【需求】{req}
+    【报告】{report}
     
-    请严格输出 JSON 格式（List[Dict]），字段包括：
-    - "title": 章节标题
-    - "desc": 本章详细写作指导（包含要点、逻辑流向）
-    - "content": "" (留空)
-    
-    只输出 JSON，不要 Markdown 标记。
+    请输出 JSON 格式（List[Dict]），包含 title, desc (详细指导)。
     """
     
     res = llm.invoke([HumanMessage(content=prompt)]).content
     clean_json = res.replace("```json", "").replace("```", "").strip()
     
     try:
-        outline = json.loads(clean_json)
+        new_outline = json.loads(clean_json)
     except:
-        outline = [{"title": "Error", "desc": "生成失败，请重试", "content": ""}]
+        new_outline = [{"title": "Error", "desc": "JSON Parsing Failed"}]
         
-    return {"current_outline": outline, "next": "END"}
+    return {"current_outline": new_outline, "next": "END"}
 
-# 5. [新增] 报告校准器 (ReportUpdater): 大纲修改后，反向补充调研报告
-def report_updater_node(state: WriterState) -> dict:
-    """当用户修改大纲后，AI 检查调研报告是否覆盖了新大纲的内容，并进行更新。"""
-    old_report = state["research_report"]
-    new_outline = state["current_outline"]
-    
-    llm = get_llm()
-    
-    outline_text = "\n".join([f"- {s['title']}: {s['desc']}" for s in new_outline])
-    
-    prompt = f"""
-    用户修改了文章大纲，我们需要更新调研报告以匹配新结构。
-    
-    【旧调研报告】
-    {old_report}
-    
-    【新大纲】
-    {outline_text}
-    
-    请重新改写调研报告。保留旧报告中有价值的信息，但必须补充新大纲中涉及的新领域（如果旧报告没覆盖，请根据常识进行逻辑补充或标记需要后续查证）。
-    保持 Markdown 格式。
+# ==========================================
+# PART 2: 迭代写作 Agent
+# ==========================================
+
+def iterative_writer_node(state: WriterState) -> dict:
     """
-    
-    new_report = llm.invoke([HumanMessage(content=prompt)]).content
-    return {"research_report": new_report, "next": "END"}
-
-# ==========================================
-# PART 2: 迭代式正文写作 (Iterative Writing)
-# ==========================================
-
-def section_writer_node(state: WriterState) -> dict:
+    迭代写作者：
+    输入：调研报告 + 完整大纲 + 之前写好的所有正文(Context) + 当前章节要求
+    """
+    report = state["research_report"]
     outline = state["current_outline"]
     idx = state["current_section_index"]
-    report = state["research_report"]
-    generated_so_far = state.get("generated_content", "") # 之前所有章节的文本
+    # full_draft 存储的是之前所有章节合并的文本，或者我们可以从 DB 读
+    # 这里假设 state 里传进来了之前已生成的内容
+    previous_context = state.get("full_draft", "")
     
     if idx < 0 or idx >= len(outline):
-        return {"current_section_draft": "", "next": "END"}
+        return {"current_section_content": "", "next": "END"}
     
     target_section = outline[idx]
     
-    # 简单的上下文截断，防止 Token 溢出
-    # 只取最近的 1000 个字符作为"上文衔接"，加上 Report 作为"全局指导"
-    context_preview = generated_so_far[-1500:] if generated_so_far else "(这是第一章)"
-    
     llm = get_llm()
     
+    # 构造 Prompt：强调上下文连贯性
     prompt = f"""
-    你正在撰写一篇文章。请根据规划，撰写第 {idx+1} 章。
+    你正在撰写一篇文章。
     
-    【全局调研报告】
+    【调研报告/背景知识】
     {report}
     
-    【文章已生成部分（前文）】
-    ...{context_preview}
+    【文章大纲】
+    {json.dumps(outline, ensure_ascii=False)}
     
-    【当前章节任务】
-    标题：{target_section['title']}
-    指导：{target_section['desc']}
+    【已写完的上文内容 (Context)】
+    {previous_context[-2000:]} 
+    (以上是最近的2000字，请保持文风连贯，逻辑衔接)
     
-    【写作要求】
-    1. **承上启下**：注意与【前文】的逻辑衔接，不要突兀。
-    2. **内容充实**：严格遵循本章指导。
-    3. **格式**：Markdown，不要重复输出章节标题（除非为了强调），直接写正文。
+    【当前任务：撰写章节】
+    章节标题：{target_section['title']}
+    写作指引：{target_section['desc']}
+    
+    要求：
+    1. 不要重复输出标题（如果大纲层级需要，可以用 Markdown ##）。
+    2. 内容要深入，充分利用调研报告中的信息。
+    3. 如果需要引用数据，请基于调研报告。
     """
     
-    draft = llm.invoke([HumanMessage(content=prompt)]).content
+    content = llm.invoke([HumanMessage(content=prompt)]).content
     
-    return {"current_section_draft": draft, "next": "END"}
-
+    return {"current_section_content": content, "next": "END"}
 
 # ==========================================
 # 构建图
 # ==========================================
 
-# 1. 大纲生成流 (Plan -> Research -> Report -> Outline)
-def build_outline_graph():
+# 1. 调研与大纲图 (Research & Outline Flow)
+def build_research_graph():
     wf = StateGraph(WriterState)
-    wf.add_node("Planner", write_planner_node)
-    wf.add_node("Researcher", write_researcher_node)
-    wf.add_node("ReportGenerator", report_generator_node)
-    wf.add_node("OutlineGenerator", outline_generator_node)
+    wf.add_node("Planner", plan_node)
+    wf.add_node("Researcher", research_node)
+    wf.add_node("PlanCheck", plan_check_node)
+    wf.add_node("ReportGenerator", report_node)
+    wf.add_node("Outliner", outline_node)
     
+    # 逻辑：Planner -> Researcher -> PlanCheck -> (Loop Planner OR ReportGenerator)
     wf.set_entry_point("Planner")
     
-    # 路由
+    wf.add_edge("Planner", "Researcher")
+    wf.add_edge("Researcher", "PlanCheck")
+    
     wf.add_conditional_edges(
-        "Planner", 
-        lambda x: x["next"], 
-        {"Researcher": "Researcher", "ReportGenerator": "ReportGenerator"}
+        "PlanCheck",
+        lambda x: x["next"],
+        {"Planner": "Planner", "ReportGenerator": "ReportGenerator"}
     )
     
-    wf.add_edge("Researcher", "Planner")
-    wf.add_edge("ReportGenerator", "OutlineGenerator")
-    wf.add_edge("OutlineGenerator", END)
+    wf.add_edge("ReportGenerator", "Outliner")
+    wf.add_edge("Outliner", END)
     
     return wf.compile()
 
-# 2. 报告更新流 (用于修改大纲后)
-def build_report_update_graph():
+# 2. 写作图 (Drafting Flow)
+def build_drafting_graph():
     wf = StateGraph(WriterState)
-    wf.add_node("Updater", report_updater_node)
-    wf.set_entry_point("Updater")
-    wf.add_edge("Updater", END)
-    return wf.compile()
-
-# 3. 写作流
-def build_writing_graph():
-    wf = StateGraph(WriterState)
-    wf.add_node("Writer", section_writer_node)
+    wf.add_node("Writer", iterative_writer_node)
     wf.set_entry_point("Writer")
     wf.add_edge("Writer", END)
     return wf.compile()
 
-outline_graph = build_outline_graph()
-report_update_graph = build_report_update_graph()
-writing_graph = build_writing_graph()
+# 导出
+research_graph = build_research_graph()
+drafting_graph = build_drafting_graph()

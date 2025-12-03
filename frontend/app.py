@@ -29,7 +29,7 @@ from src.nodes import get_llm
 # 引入深度解读模块
 from src.deep_flow import deep_graph, deep_qa_graph
 # 引入深度写作模块
-from src.write_flow import outline_graph, refine_graph, writing_graph
+from src.write_flow import research_graph, drafting_graph
 # 引入 TextLoader 和 PyPDFLoader 仅用于提取文本，不做切片
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 import tempfile
@@ -634,7 +634,7 @@ def render_deep_qa_mode():
 
 # === 新增：深度写作模式 ===
 def render_deep_writing_mode():
-    st.title("✍️ Agentic Deep Writing")
+    st.title("✍️ 深度写作助手")
     
     # === 侧边栏：项目列表 ===
     with st.sidebar:
@@ -706,19 +706,18 @@ def render_deep_writing_mode():
                 initial_state = {
                     "project_id": project_id,
                     "user_requirement": req,
-                    "source_content": source_data if source_type != "知识库 (KB)" else "",
-                    "kb_names": kb_names if source_type == "知识库 (KB)" else [],
-                    "messages": [],
-                    "loop_count": 0,
-                    "current_question": "",
-                    "qa_pairs": [],
+                    "source_type": "kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
+                    "source_data": json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
+                    "planning_steps": [],
+                    "research_notes": [],
                     "research_report": "",
                     "current_outline": [],
+                    "loop_count": 0,
                     "next": "Planner"
                 }
                 
                 # 运行图生成大纲
-                for step in outline_graph.stream(initial_state):
+                for step in research_graph.stream(initial_state):
                     pass  # 图会自动运行直到结束
                 
                 # 获取结果并保存
@@ -732,156 +731,148 @@ def render_deep_writing_mode():
     # 场景 2: 编辑现有项目
     else:
         project_id = st.session_state.current_project_id
-        project_data = get_writing_project(project_id)
+        project = get_writing_project(project_id)
         
-        if not project_data:
+        if not project:
             st.error("项目不存在")
             st.session_state.current_project_id = None
             st.rerun()
             return
             
-        st.subheader(f"📝 {project_data['title']}")
+        st.subheader(f"📝 {project['title']}")
         
-        # 同样使用 Tabs，但逻辑增强
-        tab_outline, tab_write, tab_preview = st.tabs(["📊 策划与大纲", "✍️ 迭代写作", "👀 全文预览"])
+        # 显示调研报告
+        if project['research_report']:
+            with st.expander("🔍 调研报告", expanded=False):
+                st.markdown(project['research_report'])
         
-        # --- TAB 1: 策划与大纲 ---
-        with tab_outline:
-            col_rep, col_out = st.columns([1, 1])
-            
-            # 左侧：调研报告
-            with col_rep:
-                st.subheader("📑 调研报告")
-                st.info("这是 AI 基于你的需求和知识库生成的写作蓝图。")
-                report_content = st.text_area("调研报告内容", value=project_data['research_report'], height=600)
-                
-                # 允许手动修改报告
-                if report_content != project_data['research_report']:
-                    if st.button("💾 保存报告修改"):
-                        update_project_outline(project_id, project_data['outline_data'], report_content)
-                        st.success("报告已更新")
-                        st.rerun()
-
-            # 右侧：大纲编辑
-            with col_out:
-                st.subheader("📝 结构大纲")
-                outline = project_data['outline_data']
-                new_outline = []
-                has_change = False
-                
-                # 渲染可编辑大纲
-                for i, section in enumerate(outline):
-                    with st.expander(f"第 {i+1} 章: {section['title']}", expanded=False):
-                        new_title = st.text_input("标题", value=section['title'], key=f"t_{i}")
-                        new_desc = st.text_area("指导/要点", value=section['desc'], key=f"d_{i}")
-                        
-                        if new_title != section['title'] or new_desc != section['desc']:
-                            has_change = True
-                            
-                        new_outline.append({"title": new_title, "desc": new_desc, "content": section.get("content", "")})
-                
-                # 大纲操作区
-                st.markdown("---")
-                if st.button("➕ 添加新章节"):
-                    new_outline.append({"title": "新章节", "desc": "请输入内容要点", "content": ""})
-                    has_change = True
+        # 大纲编辑区域
+        st.markdown("### 📋 文章大纲")
+        
+        outline_data = project['outline_data']
+        
+        # 显示当前大纲
+        if outline_data:
+            for i, section in enumerate(outline_data):
+                with st.container(border=True):
+                    st.markdown(f"#### {i+1}. {section['title']}")
+                    st.markdown(f"*{section['desc']}*")
                     
-                if has_change or len(new_outline) != len(outline):
-                    if st.button("💾 保存大纲并同步更新报告", type="primary"):
-                        with st.spinner("正在根据新大纲校准调研报告..."):
-                            # 1. 保存大纲
-                            update_project_outline(project_id, new_outline)
-                            
-                            # 2. 调用 report_update_graph
-                            state = {
-                                "research_report": project_data['research_report'],
-                                "current_outline": new_outline
-                            }
-                            
-                            # 运行图更新报告
-                            for step in report_update_graph.stream(state):
-                                pass
-                            
-                            # 保存更新后的报告
-                            update_project_outline(project_id, new_outline, state["research_report"])
-                            
-                            st.success("大纲和调研报告已同步更新！")
-                            st.rerun()
+                    # 显示已生成的内容（如果有）
+                    if section.get('content'):
+                        with st.expander("已生成内容（点击展开）"):
+                            st.markdown(section['content'])
+        else:
+            st.info("暂无大纲，请先生成。")
         
-        # --- TAB 2: 迭代写作 ---
-        with tab_write:
-            st.subheader("✍️ 分章节写作")
-            
-            if not project_data['outline_data']:
-                st.info("请先生成大纲")
-                return
-                
-            outline = project_data['outline_data']
-            generated_content = project_data.get('full_draft', '')
-            
-            # 显示已生成的内容
-            if generated_content:
-                with st.expander("已生成全文（点击展开）", expanded=False):
-                    st.text_area("全文内容", generated_content, height=300, disabled=True)
-            
-            # 选择要写的章节
-            chapter_options = [f"{i+1}. {sec['title']}" for i, sec in enumerate(outline)]
-            selected_chapter = st.selectbox("选择要写的章节", chapter_options)
-            selected_idx = chapter_options.index(selected_chapter)
-            
-            # 显示章节指导
-            st.markdown(f"**章节指导**: {outline[selected_idx]['desc']}")
-            
-            # 生成按钮
-            if st.button("🤖 AI 生成此章节"):
-                with st.spinner(f"正在生成 {outline[selected_idx]['title']}..."):
+        # 大纲操作
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 重新生成大纲"):
+                with st.spinner("重新生成大纲..."):
                     # 准备状态
                     initial_state = {
-                        "user_requirement": project_data['requirements'],
-                        "research_report": project_data['research_report'],
-                        "current_outline": outline,
-                        "current_section_index": selected_idx,
-                        "generated_content": generated_content,
-                        "current_section_draft": "",
-                        "next": "Writer"
+                        "project_id": project_id,
+                        "user_requirement": project['requirements'],
+                        "source_type": project['source_type'],
+                        "source_data": project['source_data'],
+                        "planning_steps": [],
+                        "research_notes": [],
+                        "research_report": project['research_report'] or "",
+                        "current_outline": [],
+                        "loop_count": 0,
+                        "next": "Planner"
                     }
                     
-                    # 运行图生成章节
-                    for step in writing_graph.stream(initial_state):
+                    # 运行图生成大纲
+                    for step in research_graph.stream(initial_state):
                         pass
                     
-                    # 获取生成的内容
-                    draft = initial_state["current_section_draft"]
+                    # 保存新大纲
+                    final_state = initial_state
+                    update_project_outline(project_id, final_state["current_outline"], final_state["research_report"])
                     
-                    # 更新大纲中的章节内容
-                    outline[selected_idx]["content"] = draft
-                    update_project_outline(project_id, outline)
+                    st.rerun()
+        
+        with col2:
+            edit_instruction = st.text_area("修改指令", placeholder="例如：增加一个关于未来趋势的章节", height=100)
+            if st.button("✏️ 修改大纲") and edit_instruction:
+                with st.spinner("修改大纲中..."):
+                    # 准备状态
+                    initial_state = {
+                        "project_id": project_id,
+                        "user_requirement": project['requirements'],
+                        "source_type": project['source_type'],
+                        "source_data": project['source_data'],
+                        "planning_steps": [],
+                        "research_notes": [],
+                        "research_report": project['research_report'] or "",
+                        "current_outline": outline_data,
+                        "loop_count": 0,
+                        "next": "Planner"
+                    }
                     
-                    # 更新全文草稿
-                    # 这里简单处理，实际应该更精确地管理各章节内容
+                    # 运行图修改大纲（实际上是重新调研）
+                    for step in research_graph.stream(initial_state):
+                        pass
+                    
+                    # 保存修改后的大纲
+                    final_state = initial_state
+                    update_project_outline(project_id, final_state["current_outline"], final_state["research_report"])
+                    
+                    st.rerun()
+        
+        with col3:
+            if st.button("📄 生成完整文章"):
+                with st.spinner("生成完整文章中..."):
                     full_draft = ""
-                    for sec in outline:
-                        if sec["content"]:
-                            full_draft += f"## {sec['title']}\n\n{sec['content']}\n\n"
+                    outline_data = project['outline_data']
+                    
+                    # 逐章生成内容
+                    for i, section in enumerate(outline_data):
+                        # 准备状态
+                        initial_state = {
+                            "project_id": project_id,
+                            "user_requirement": project['requirements'],
+                            "source_type": project['source_type'],
+                            "source_data": project['source_data'],
+                            "research_report": project['research_report'] or "",
+                            "current_outline": outline_data,
+                            "full_draft": full_draft,
+                            "current_section_index": i,
+                            "current_section_content": "",
+                            "loop_count": 0,
+                            "next": "Writer"
+                        }
+                        
+                        # 运行图生成章节
+                        for step in drafting_graph.stream(initial_state):
+                            pass
+                        
+                        # 获取生成的内容
+                        section_content = initial_state["current_section_content"]
+                        full_draft += f"## {section['title']}\n\n{section_content}\n\n"
+                        
+                        # 更新大纲中的章节内容
+                        outline_data[i]["content"] = section_content
+                        update_project_outline(project_id, outline_data)
+                        
+                        # 短暂延迟避免API过载
+                        time.sleep(1)
+                    
+                    # 保存完整草稿
                     update_project_draft(project_id, full_draft)
                     
-                    st.success("章节生成完成！")
+                    st.success("文章生成完成！")
                     st.rerun()
-            
-            # 显示已生成的章节内容
-            if outline[selected_idx].get("content"):
-                st.markdown("### 已生成内容")
-                st.markdown(outline[selected_idx]["content"])
         
-        # --- TAB 3: 全文预览 ---
-        with tab_preview:
-            st.subheader("👀 全文预览")
-            
-            full_draft = project_data.get('full_draft', '')
-            if full_draft:
-                st.markdown(full_draft)
-            else:
-                st.info("暂无完整草稿，请先生成章节内容。")
+        # 显示完整草稿（如果有）
+        if project['full_draft']:
+            st.markdown("---")
+            st.markdown("### 📄 完整草稿")
+            st.markdown(project['full_draft'])
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
