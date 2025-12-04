@@ -637,6 +637,24 @@ def render_deep_qa_mode():
 def render_deep_writing_mode():
     st.title("✍️ 深度写作助手")
     
+    # === 辅助：预加载全文 (修复 UnboundLocalError 的关键) ===
+    def get_project_full_content(source_type, source_data):
+        """统一处理全文加载，防止变量未定义"""
+        content = ""
+        try:
+            if source_type == "知识库 (KB)":
+                # source_data 是 JSON 字符串列表
+                kb_names = json.loads(source_data)
+                docs, _ = load_kbs(kb_names)
+                content = "\n\n".join([d.page_content for d in docs])
+            elif source_type in ["直接粘贴文本", "text"]:
+                content = source_data
+            # 注意：这里可能还需要处理上传文件的情况
+            return content
+        except Exception as e:
+            st.warning(f"加载全文时出错: {e}")
+            return ""
+    
     # === 侧边栏：项目列表 ===
     with st.sidebar:
         st.subheader("📂 写作项目")
@@ -729,6 +747,9 @@ def render_deep_writing_mode():
         status_box = st.status("🖊️ AI 主编正在修改大纲...", expanded=True)
         new_outline = current_outline
         
+        # 获取项目信息
+        project = get_writing_project(project_id)
+        
         try:
             initial_state = {
                 "current_outline": current_outline,
@@ -799,17 +820,7 @@ def render_deep_writing_mode():
         
         # 场景 A: 新建项目时的"生成大纲"按钮
         if st.button("✨ 生成大纲", type="primary", disabled=start_disabled):
-            # 1. 先创建项目占位
-            pid = create_writing_project(
-                title=title,
-                requirements=req,
-                source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
-                full_content=full_content
-            )
-            st.session_state.current_project_id = pid
-            
-            # 2. 预加载全文以支持 Context Caching
+            # 1. 预加载全文以支持 Context Caching
             full_content = ""
             if source_type == "知识库 (KB)" and kb_names:
                 # 从知识库加载文档内容
@@ -821,6 +832,16 @@ def render_deep_writing_mode():
             elif source_type in ["直接粘贴文本", "上传文件"]:
                 # 直接使用 source_data 作为全文
                 full_content = source_data
+            
+            # 2. 创建项目
+            pid = create_writing_project(
+                title=title,
+                requirements=req,
+                source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
+                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
+                full_content=full_content
+            )
+            st.session_state.current_project_id = pid
             
             # 3. 准备初始状态
             initial_state = {
@@ -1082,59 +1103,7 @@ def render_deep_writing_mode():
             st.markdown("---")
             st.subheader("📥 导出文档")
             
-            if full_markdown.strip():
-                # 准备二进制数据
-                md_bytes = full_markdown.encode('utf-8')
-                
-                # HTML 生成逻辑
-                def create_html_bytes(md_text, doc_title):
-                    import markdown
-                    html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
-                    html_str = f"""<!DOCTYPE html>
-                    <html lang="zh-CN">
-                    <head><meta charset="utf-8"><title>{doc_title}</title>
-                    <style>body{{font-family:sans-serif;max-width:900px;margin:0 auto;padding:20px;line-height:1.6}}img{{max-width:100%}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px}}</style>
-                    </head><body>{html_body}</body></html>"""
-                    return html_str.encode('utf-8')
-
-                html_bytes = create_html_bytes(full_markdown, raw_title)
-
-                # === 方案 A: 标准 Streamlit 按钮 (文件名已修复) ===
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.download_button(
-                        label="📄 下载 Markdown",
-                        data=md_bytes,
-                        file_name=f"{clean_title}.md", # 使用清洗后的文件名
-                        mime="text/markdown",
-                        key=f"btn_md_{pid}"
-                    )
-                with col2:
-                    st.download_button(
-                        label="🖨️ 下载 HTML",
-                        data=html_bytes,
-                        file_name=f"{clean_title}.html", # 使用清洗后的文件名
-                        mime="text/html",
-                        key=f"btn_html_{pid}"
-                    )
-                
-                # === 方案 B: 备用下载链接 (Plan B) ===
-                # 如果按钮依然卡住，这个链接通过浏览器原生机制下载，几乎100%成功
-                st.caption("⚠️ 如果上方按钮点击后没反应或下载失败，请点击下方链接尝试：")
-                
-                def get_download_link(data_bytes, filename, text):
-                    import base64
-                    b64 = base64.b64encode(data_bytes).decode()
-                    return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
-                
-                link_md = get_download_link(md_bytes, f"{clean_title}.md", "🔗 备用链接：点击下载 Markdown")
-                link_html = get_download_link(html_bytes, f"{clean_title}.html", "🔗 备用链接：点击下载 HTML")
-                
-                st.markdown(f"{link_md} &nbsp;&nbsp;|&nbsp;&nbsp; {link_html}", unsafe_allow_html=True)
-                
-            else:
-                st.warning("⚠️ 内容为空，无法下载。")
-        
+            st.info("📥 导出功能已移除，请直接复制所需内容。")        
         # --- TAB 3: 分享与发布 ---
         with tab3:
             import streamlit.components.v1 as components
