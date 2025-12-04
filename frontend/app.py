@@ -30,7 +30,7 @@ from src.nodes import get_llm
 # 引入深度解读模块
 from src.deep_flow import deep_graph, deep_qa_graph
 # 引入深度写作模块
-from src.write_flow import research_graph, drafting_graph, refine_graph
+from src.write_flow import research_graph, drafting_graph, refine_graph, generate_viral_card_content
 # 引入 TextLoader 和 PyPDFLoader 仅用于提取文本，不做切片
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 import tempfile
@@ -1044,70 +1044,91 @@ def render_deep_writing_mode():
         # 添加tabs定义
         tab1, tab2, tab3 = st.tabs(["📝 大纲编辑", "🚀 全文写作", "🖼️ 长图生成"])
         
-        # --- TAB 1: 大纲编辑 ---
+        # --- TAB 1: 调研与大纲管理 ---
         with tab1:
-            # 结果展示区域 (显示已生成的内容)
-            for i, section in enumerate(outline_data):
-                with st.expander(f"📖 {section['title']}", expanded=True if not section.get('content') else False):
-                    # 如果没内容，显示单章生成按钮
-                    if not section.get('content'):
-                        if st.button(f"单独生成此章", key=f"single_gen_{i}"):
-                            # 单章生成逻辑 (复用上面的核心部分)
-                            with st.spinner("写作中..."):
-                                state = {
-                                    "research_report": project['research_report'] or "",
-                                    "current_outline": outline_data,
-                                    "full_draft": current_full_draft, 
-                                    "current_section_index": i,
-                                    "project_id": project_id, "user_requirement": project['requirements'], "source_type": project['source_type'], "source_data": project['source_data']
-                                }
-                                res = drafting_graph.invoke(state)
-                                outline_data[i]['content'] = res["current_section_content"]
-                                update_project_outline(project_id, outline_data, project['research_report'] or "")
-                                st.rerun()
-                    else:
-                        # 有内容，显示编辑框
-                        new_txt = st.text_area("内容", value=section['content'], height=400, key=f"sec_txt_{i}")
-                        
-                        col_save, col_polish = st.columns([1, 4])
-                        
-                        # --- 按钮 1: 保存修改 ---
-                        with col_save:
-                            if st.button("💾 保存", key=f"save_sec_{i}"):
-                                outline_data[i]['content'] = new_txt
-                                update_project_outline(project_id, outline_data)
-                                st.success("已保存")
-                        
-                        # --- 按钮 2: [新增] 深度润色 ---
-                        with col_polish:
-                            if st.button("✨ 深度润色 (主编模式)", key=f"polish_sec_{i}", help="使用高级指令重写本章，增加洞察力和类比"):
-                                with st.spinner(f"AI 主编正在重写第 {i+1} 章..."):
-                                    # 临时调用 LLM 进行润色
-                                    from src.nodes import get_llm
-                                    from langchain_core.messages import HumanMessage
-                                    
-                                    llm = get_llm()
-                                    polish_prompt = f"""
-                                    请作为一位科技媒体主编，对下面的文章段落进行深度润色。
-                                    
-                                    【原内容】
-                                    {new_txt}
-                                    
-                                    【润色要求】
-                                    1. **语气更犀利**：增加行业洞察力，拒绝平淡。
-                                    2. **增加类比**：如果涉及技术概念，请加入通俗易懂的类比。
-                                    3. **优化标题**：如果标题太死板，请改为更有吸引力的新闻式标题。
-                                    4. **金句提炼**：适当增加引用块（Blockquote）来强调核心观点。
-                                    
-                                    请直接输出润色后的 Markdown 内容。
-                                    """
-                                    
-                                    polished_content = llm.invoke([HumanMessage(content=polish_prompt)]).content
-                                    
-                                    # 更新并保存
-                                    outline_data[i]['content'] = polished_content
-                                    update_project_outline(project_id, outline_data)
+            col_rep, col_out = st.columns([1, 1])
+            
+            # 左侧：调研报告
+            with col_rep:
+                st.markdown("### 🕵️‍♂️ 深度调研报告")
+                st.caption("AI 基于调研生成的背景资料，用于指导写作。")
+                new_report = st.text_area("报告内容", value=project.get('research_report', ''), height=600, key="report_editor")
+                if new_report != project.get('research_report', ''):
+                    if st.button("💾 保存报告修改"):
+                        update_project_outline(project_id, project['outline_data'], new_report)
+                        st.success("报告已更新")
+                        st.rerun()
+            
+            # 右侧：大纲编辑器 (核心修改)
+            with col_out:
+                st.markdown("### 📝 大纲编辑器")
+                st.caption("您可以手动增删改，也可以指挥 AI 帮您改。")
+                
+                outline = project.get('outline_data', [])
+                
+                # --- A. Agent 智能修改区 ---
+                with st.container(border=True):
+                    c_ai_1, c_ai_2 = st.columns([3, 1])
+                    with c_ai_1:
+                        ai_instruction = st.text_input("🤖 AI 指令", placeholder="例如：把第三章拆分成两章，或者删除关于历史的章节")
+                    with c_ai_2:
+                        st.write("") 
+                        st.write("")
+                        if st.button("🪄 AI 修改", use_container_width=True):
+                            if ai_instruction:
+                                # 调用流式修改函数 (需确保 run_refine_stream 已定义)
+                                if run_refine_stream(project_id, outline, ai_instruction):
                                     st.rerun()
+
+                st.divider()
+
+                # --- B. 手动编辑区 (列表渲染) ---
+                # 使用临时列表来处理删除操作
+                indices_to_delete = []
+                updated_outline = []
+                has_manual_change = False
+                
+                for i, section in enumerate(outline):
+                    with st.expander(f"#{i+1} {section['title']}", expanded=False):
+                        c1, c2 = st.columns([5, 1])
+                        with c1:
+                            new_title = st.text_input(f"标题", value=section['title'], key=f"title_{i}")
+                            new_desc = st.text_area(f"指引", value=section['desc'], key=f"desc_{i}", height=70)
+                        with c2:
+                            st.write("")
+                            st.write("")
+                            # 删除按钮
+                            if st.button("🗑️", key=f"del_{i}", help="删除此章节"):
+                                indices_to_delete.append(i)
+                                has_manual_change = True
+                        
+                        # 只有没被删除的才加入新列表
+                        if i not in indices_to_delete:
+                            # 检查内容是否变动
+                            if new_title != section['title'] or new_desc != section['desc']:
+                                has_manual_change = True
+                            
+                            updated_outline.append({
+                                "title": new_title, 
+                                "desc": new_desc, 
+                                "content": section.get("content", "") # 保留原有的正文
+                            })
+
+                # --- C. 底部操作区 ---
+                c_add, c_save = st.columns(2)
+                
+                with c_add:
+                    if st.button("➕ 添加新章节", use_container_width=True):
+                        updated_outline.append({"title": "新章节", "desc": "请输入本章的写作要点...", "content": ""})
+                        has_manual_change = True
+                
+                with c_save:
+                    # 如果有删除或添加操作，按钮自动高亮提示保存
+                    if has_manual_change or len(indices_to_delete) > 0:
+                        if st.button("💾 确认保存修改", type="primary", use_container_width=True):
+                            update_project_outline(project_id, updated_outline, project.get('research_report'))
+                            st.success("大纲已更新！")
+                            st.rerun()
         
         # --- TAB 2: 全文写作 ---
         with tab2:
@@ -1178,49 +1199,63 @@ def render_deep_writing_mode():
         with tab3:
             import streamlit.components.v1 as components
             import markdown
+            from src.write_flow import generate_viral_card_content
 
             # 1. 准备数据
             current_outline = project.get('outline_data', [])
             raw_title = project.get('title', '未命名文档')
             
-            # 2. 构建"精华速读" (如果没有专门生成，就手写一个模板，或者让 AI 生成)
-            # 这里为了演示，我们假设第一段是引言，把它提取出来做导语
-            summary_text = "💡 **核心洞见**：开源大模型 DeepSeek-V3.2 在数学与代码领域首次实现对 GPT-5 的反超，标志着 AI 算力平权时代的到来。"
-            if len(current_outline) > 0 and current_outline[0].get('content'):
-                # 尝试截取引言的前100字作为导语
-                first_chapter_content = current_outline[0]['content']
-                summary_text = "💡 **导读**：" + first_chapter_content[:120] + "..."
-
-            # 3. 拼接正文
-            full_markdown = ""
+            # 拼接正文
+            full_markdown_for_ai = ""
+            full_markdown_display = ""
+            
             for sec in current_outline:
                 content = sec.get('content', '')
                 if content:
-                    # 使用 HTML 标签稍微辅助一下排版
-                    full_markdown += f"## {sec['title']}\n\n{content}\n\n"
+                    full_markdown_for_ai += f"{sec['title']}\n{content}\n"
+                    full_markdown_display += f"## {sec['title']}\n\n{content}\n\n"
 
-            if not full_markdown.strip():
-                st.warning("⚠️ 暂无内容，请先生成文章。")
+            if not full_markdown_display.strip():
+                st.warning("⚠️ 暂无内容，请先在\"正文写作\"页生成文章。")
             else:
-                st.subheader("🎨 杂志级长图预览")
-                st.caption("这种风格更适合发朋友圈或社群，自带专业感。")
+                st.subheader("🎨 生成分享长图")
+                
+                # 2. 自动生成/编辑 病毒摘要
+                if "viral_summary" not in st.session_state:
+                    st.session_state.viral_summary = ""
+                
+                col_sum_1, col_sum_2 = st.columns([3, 1])
+                with col_sum_1:
+                    if not st.session_state.viral_summary:
+                         with st.spinner("正在提炼社交媒体摘要..."):
+                             # 调用后端函数
+                             st.session_state.viral_summary = generate_viral_card_content(raw_title, full_markdown_for_ai)
+                    
+                    final_summary = st.text_area("编辑导语 (卡片头部)", value=st.session_state.viral_summary, height=120)
+                
+                with col_sum_2:
+                    st.write("")
+                    if st.button("🔄 重写导语"):
+                        st.session_state.viral_summary = ""
+                        st.rerun()
 
-                html_body = markdown.markdown(full_markdown, extensions=['tables', 'fenced_code'])
-                summary_html = markdown.markdown(summary_text)
+                st.markdown("---")
 
-                # 4. 构建杂志风 HTML
+                # 3. 渲染 HTML (Inject CSS)
+                html_body = markdown.markdown(full_markdown_display, extensions=['fenced_code']) # 不加载 tables 扩展
+                summary_html = markdown.markdown(final_summary)
+
                 magazine_html = f"""
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
                     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-                    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
+                    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet">
                     <style>
-                        /* 全局重置 */
-                        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+                        *  box-sizing: border-box; margin: 0; padding: 0; 
                         body {{
-                            background-color: #eef2f5;
+                            background-color: #f0f2f6;
                             font-family: 'Noto Sans SC', sans-serif;
                             padding: 20px;
                             display: flex;
@@ -1228,58 +1263,43 @@ def render_deep_writing_mode():
                             align-items: center;
                         }}
                         
-                        /* 长图容器 */
                         #poster-node {{
                             width: 100%;
-                            max-width: 450px; /* 朋友圈长图的最佳宽度 */
-                            background-color: #fff;
+                            max-width: 450px; /* 朋友圈完美宽度 */
+                            background: white;
                             box-shadow: 0 10px 30px rgba(0,0,0,0.15);
                             overflow: hidden;
-                            position: relative;
                         }}
 
-                        /* 1. 头部海报区 */
+                        /* 头部设计 */
                         .header-banner {{
-                            background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%);
-                            color: white;
-                            padding: 40px 30px;
+                            background: linear-gradient(135deg, #000000 0%, #434343 100%); /* 高级黑金风格 */
+                            color: #fdfbf7;
+                            padding: 50px 30px 40px;
                             text-align: center;
-                            position: relative;
                         }}
                         .header-title {{
                             font-family: 'Noto Serif SC', serif;
-                            font-size: 28px;
-                            font-weight: 700;
+                            font-size: 24px;
                             line-height: 1.4;
-                            margin-bottom: 15px;
-                            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                            margin-bottom: 10px;
+                            font-weight: 700;
                         }}
-                        .header-tag {{
-                            display: inline-block;
-                            background: rgba(255,255,255,0.2);
-                            padding: 4px 12px;
-                            border-radius: 20px;
-                            font-size: 12px;
-                            letter-spacing: 1px;
-                            text-transform: uppercase;
-                        }}
-
-                        /* 2. 导语卡片 */
+                       
+                        /* 导语卡片 */
                         .summary-card {{
-                            margin: -20px 20px 20px 20px;
-                            background: #fff;
+                            margin: 20px;
+                            background: #fff9e6;
                             padding: 20px;
-                            border-radius: 8px;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-                            border-left: 4px solid #4ca1af;
+                            border-radius: 12px;
+                            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                            border-left: 4px solid #ffb84d;
                             font-size: 14px;
                             color: #555;
                             line-height: 1.6;
-                            position: relative;
-                            z-index: 10;
                         }}
 
-                        /* 3. 正文区域 */
+                        /* 正文区域 */
                         .content-body {{
                             padding: 10px 30px 40px 30px;
                             color: #333;
@@ -1289,58 +1309,42 @@ def render_deep_writing_mode():
                         
                         /* 排版细节 */
                         h2 {{
-                            margin-top: 35px;
+                            margin-top: 30px;
                             margin-bottom: 15px;
                             font-size: 18px;
                             font-weight: 700;
-                            color: #2c3e50;
-                            display: flex;
-                            align-items: center;
-                        }}
-                        h2::before {{
-                            content: '';
-                            display: inline-block;
-                            width: 6px;
-                            height: 6px;
-                            background: #4ca1af;
-                            border-radius: 50%;
-                            margin-right: 10px;
+                            color: #222;
+                            border-bottom: 1px dashed #eee;
+                            padding-bottom: 8px;
                         }}
                         p {{ margin-bottom: 15px; text-align: justify; }}
                         
-                        /* 引用块美化 (金句) */
+                        /* 引用块美化 */
                         blockquote {{
-                            background: #f9f9f9;
-                            border: none;
+                            background: #f8f9fa;
+                            border-left: 4px solid #4ca1af;
                             padding: 15px 20px;
                             margin: 20px 0;
-                            font-family: 'Noto Serif SC', serif;
-                            font-style: italic;
-                            color: #666;
-                            border-radius: 8px;
-                            position: relative;
+                            color: #555;
+                            border-radius: 0 8px 8px 0;
                         }}
-                        blockquote::before {{
-                            content: '“';
-                            font-size: 40px;
-                            color: #e0e0e0;
-                            position: absolute;
-                            top: -10px;
-                            left: 10px;
-                        }}
+
+                        /* 列表美化 */
+                        ul, ol {{ padding-left: 20px; }}
+                        li {{ margin-bottom: 8px; }}
 
                         /* 代码块 */
                         pre {{
                             background: #2d2d2d;
                             color: #f8f8f2;
                             padding: 15px;
-                            border-radius: 6px;
+                            border-radius: 8px;
                             overflow-x: auto;
                             font-size: 12px;
                             margin: 15px 0;
                         }}
 
-                        /* 4. 底部署名 */
+                        /* 底部署名 */
                         .footer {{
                             background-color: #f8f9fa;
                             padding: 20px;
@@ -1359,17 +1363,20 @@ def render_deep_writing_mode():
                             z-index: 999;
                         }}
                         .dl-btn {{
-                            background: #2c3e50;
+                            background: #222;
                             color: white;
                             border: none;
                             padding: 12px 25px;
                             border-radius: 50px;
                             font-weight: bold;
-                            box-shadow: 0 5px 15px rgba(44, 62, 80, 0.4);
+                            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
                             cursor: pointer;
-                            transition: transform 0.2s;
+                            transition: all 0.3s ease;
                         }}
-                        .dl-btn:hover {{ transform: scale(1.05); }}
+                        .dl-btn:hover {{ 
+                            transform: translateY(-2px);
+                            box-shadow: 0 7px 20px rgba(0, 0, 0, 0.4);
+                        }}
 
                     </style>
                 </head>
@@ -1382,7 +1389,6 @@ def render_deep_writing_mode():
                     <div id="poster-node">
                         <!-- 头部 -->
                         <div class="header-banner">
-                            <div class="header-tag">DEEPSEEK REPORT</div>
                             <div class="header-title">{raw_title}</div>
                         </div>
 
@@ -1437,8 +1443,7 @@ def render_deep_writing_mode():
                         }}
                     </script>
                 </body>
-                </html>
-                """
+                </html>"""
 
                 # 渲染组件
                 components.html(magazine_html, height=800, scrolling=True)
