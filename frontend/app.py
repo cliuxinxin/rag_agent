@@ -1022,156 +1022,90 @@ def render_deep_writing_mode():
         st.markdown("---")
         
         # --- 全文预览与导出 ---
-        st.markdown("### 📄 全文预览")
+        import re
+        import base64
+
+        # 1. 获取数据
+        current_outline = project.get('outline_data', [])
+        raw_title = project.get('title', '未命名文档')
+        pid = project_id
         
-        # 1. 拼接全文
-        outline = project['outline_data']
-        title = project['title']
+        # === 修复核心 1: 清洗文件名 ===
+        # 去掉 Emoji、空格和特殊符号，只保留中文、英文、数字、下划线
+        # 这一步非常关键，否则浏览器下载会卡在 100%
+        clean_title = re.sub(r'[^\w\u4e00-\u9fa5\-_]', '_', raw_title)
+        # 防止文件名太长
+        if len(clean_title) > 50: clean_title = clean_title[:50]
         
-        # 拼接 Markdown 文本
-        full_markdown = f"# {title}\n\n"
-        # 如果有引言/摘要，可以在这里加
-        # full_markdown += f"> 摘要：...\n\n"
-        
-        for sec in outline:
+        # 2. 拼接内容
+        full_markdown = f"# {raw_title}\n\n"
+        for sec in current_outline:
             content = sec.get('content', '')
             if content:
-                full_markdown += f"## {sec['title']}\n\n"
-                full_markdown += f"{content}\n\n"
+                full_markdown += f"## {sec['title']}\n\n{content}\n\n"
         
-        # 2. 渲染预览
-        with st.container(border=True, height=600):  # 固定高度，内容滚动
-            st.markdown(full_markdown)
-        
+        # 3. 预览
+        st.markdown("### 📄 全文预览")
+        with st.container(border=True, height=600):
+            if not full_markdown.strip() or len(current_outline) == 0:
+                st.info("暂无内容，请先在\"正文写作\"标签页生成文章。")
+            else:
+                st.markdown(full_markdown)
+
         st.markdown("---")
         st.subheader("📥 导出文档")
         
-        # 3. 准备下载数据 (关键修复：转为 bytes)
-        # Markdown 转 Bytes
-        md_bytes = full_markdown.encode('utf-8')
-        
-        # HTML 转 Bytes (包含完整的头部和样式)
-        def create_html_bytes(md_text, doc_title):
-            import markdown
-            # 转换 markdown 到 html body
-            html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
+        if full_markdown.strip():
+            # 准备二进制数据
+            md_bytes = full_markdown.encode('utf-8')
             
-            # 拼接完整 HTML
-            html_str = f"""
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>{doc_title}</title>
-                <style>
-                    body {{
-                        font-family: "Microsoft YaHei", "SimHei", -apple-system, BlinkMacSystemFont, sans-serif;
-                        max-width: 900px;
-                        margin: 0 auto;
-                        padding: 40px;
-                        line-height: 1.8;
-                        color: #2c3e50;
-                        background-color: #fff;
-                    }}
-                    h1 {{
-                        text-align: center;
-                        border-bottom: 2px solid #eaeaea;
-                        padding-bottom: 20px;
-                        margin-bottom: 40px;
-                    }}
-                    h2 {{
-                        color: #2980b9;
-                        margin-top: 40px;
-                        margin-bottom: 20px;
-                        border-left: 5px solid #2980b9;
-                        padding-left: 15px;
-                        background: #f9f9f9;
-                        padding-top: 5px;
-                        padding-bottom: 5px;
-                    }}
-                    h3 {{
-                        color: #34495e;
-                        margin-top: 30px;
-                    }}
-                    p {{
-                        margin-bottom: 15px;
-                        text-align: justify;
-                    }}
-                    blockquote {{
-                        border-left: 4px solid #ddd;
-                        padding-left: 15px;
-                        color: #777;
-                        font-style: italic;
-                    }}
-                    code {{
-                        background: #f4f4f4;
-                        padding: 2px 5px;
-                        border-radius: 3px;
-                        font-family: Consolas, monospace;
-                    }}
-                    pre {{
-                        background: #f8f8f8;
-                        padding: 15px;
-                        border-radius: 5px;
-                        overflow-x: auto;
-                    }}
-                    table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin: 20px 0;
-                    }}
-                    th, td {{
-                        border: 1px solid #ddd;
-                        padding: 12px;
-                        text-align: left;
-                    }}
-                    th {{
-                        background-color: #f2f2f2;
-                        color: #333;
-                    }}
-                    img {{
-                        max-width: 100%;
-                        height: auto;
-                        display: block;
-                        margin: 20px auto;
-                    }}
-                </style>
-            </head>
-            <body>
-                {html_body}
-            </body>
-            </html>
-            """
-            return html_str.encode('utf-8')
+            # HTML 生成逻辑
+            def create_html_bytes(md_text, doc_title):
+                import markdown
+                html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
+                html_str = f"""<!DOCTYPE html>
+                <html lang="zh-CN">
+                <head><meta charset="utf-8"><title>{doc_title}</title>
+                <style>body{{font-family:sans-serif;max-width:900px;margin:0 auto;padding:20px;line-height:1.6}}img{{max-width:100%}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px}}</style>
+                </head><body>{html_body}</body></html>"""
+                return html_str.encode('utf-8')
 
-        html_bytes = create_html_bytes(full_markdown, title)
+            html_bytes = create_html_bytes(full_markdown, raw_title)
 
-        # 4. 渲染按钮 (关键修复：添加 key 参数绑定项目ID，防止刷新丢失)
-        col_dl_1, col_dl_2 = st.columns(2)
-        
-        with col_dl_1:
-            st.download_button(
-                label="📄 下载 Markdown 源码",
-                data=md_bytes,  # 传入 bytes
-                file_name=f"{title}.md",
-                mime="text/markdown",
-                key=f"dl_md_{project_id}",  # 绑定项目ID，防止刷新丢失
-                use_container_width=True
-            )
-        
-        with col_dl_2:
-            st.download_button(
-                label="🖨️ 导出为排版好的 HTML (推荐)",
-                data=html_bytes,  # 传入 bytes
-                file_name=f"{title}.html",
-                mime="text/html",
-                key=f"dl_html_{project_id}",  # 绑定项目ID，防止刷新丢失
-                help="下载后双击打开，显示效果最好。可右键->打印->另存为PDF。",
-                use_container_width=True
-            )
-        
-        st.markdown("---")
+            # === 方案 A: 标准 Streamlit 按钮 (文件名已修复) ===
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📄 下载 Markdown",
+                    data=md_bytes,
+                    file_name=f"{clean_title}.md", # 使用清洗后的文件名
+                    mime="text/markdown",
+                    key=f"btn_md_{pid}"
+                )
+            with col2:
+                st.download_button(
+                    label="🖨️ 下载 HTML",
+                    data=html_bytes,
+                    file_name=f"{clean_title}.html", # 使用清洗后的文件名
+                    mime="text/html",
+                    key=f"btn_html_{pid}"
+                )
+            
+            # === 方案 B: 备用下载链接 (Plan B) ===
+            # 如果按钮依然卡住，这个链接通过浏览器原生机制下载，几乎100%成功
+            st.caption("⚠️ 如果上方按钮点击后没反应或下载失败，请点击下方链接尝试：")
+            
+            def get_download_link(data_bytes, filename, text):
+                b64 = base64.b64encode(data_bytes).decode()
+                return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
+            
+            link_md = get_download_link(md_bytes, f"{clean_title}.md", "🔗 备用链接：点击下载 Markdown")
+            link_html = get_download_link(html_bytes, f"{clean_title}.html", "🔗 备用链接：点击下载 HTML")
+            
+            st.markdown(f"{link_md} &nbsp;&nbsp;|&nbsp;&nbsp; {link_html}", unsafe_allow_html=True)
+            
+        else:
+            st.warning("⚠️ 内容为空，无法下载。")
         
         # 结果展示区域 (显示已生成的内容)
         for i, section in enumerate(outline_data):
