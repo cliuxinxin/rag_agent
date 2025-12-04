@@ -1147,7 +1147,7 @@ def render_deep_writing_mode():
 
         html_bytes = create_html_bytes(full_markdown, title)
 
-        # 4. 渲染按钮
+        # 4. 渲染按钮 (关键修复：添加 key 参数绑定项目ID，防止刷新丢失)
         col_dl_1, col_dl_2 = st.columns(2)
         
         with col_dl_1:
@@ -1156,6 +1156,7 @@ def render_deep_writing_mode():
                 data=md_bytes,  # 传入 bytes
                 file_name=f"{title}.md",
                 mime="text/markdown",
+                key=f"dl_md_{project_id}",  # 绑定项目ID，防止刷新丢失
                 use_container_width=True
             )
         
@@ -1165,6 +1166,7 @@ def render_deep_writing_mode():
                 data=html_bytes,  # 传入 bytes
                 file_name=f"{title}.html",
                 mime="text/html",
+                key=f"dl_html_{project_id}",  # 绑定项目ID，防止刷新丢失
                 help="下载后双击打开，显示效果最好。可右键->打印->另存为PDF。",
                 use_container_width=True
             )
