@@ -1193,11 +1193,46 @@ def render_deep_writing_mode():
                 else:
                     # 有内容，显示编辑框
                     new_txt = st.text_area("内容", value=section['content'], height=400, key=f"sec_txt_{i}")
-                    if new_txt != section['content']:
-                        if st.button("保存修改", key=f"save_sec_{i}"):
+                    
+                    col_save, col_polish = st.columns([1, 4])
+                    
+                    # --- 按钮 1: 保存修改 ---
+                    with col_save:
+                        if st.button("💾 保存", key=f"save_sec_{i}"):
                             outline_data[i]['content'] = new_txt
                             update_project_outline(project_id, outline_data)
                             st.success("已保存")
+                    
+                    # --- 按钮 2: [新增] 深度润色 ---
+                    with col_polish:
+                        if st.button("✨ 深度润色 (主编模式)", key=f"polish_sec_{i}", help="使用高级指令重写本章，增加洞察力和类比"):
+                            with st.spinner(f"AI 主编正在重写第 {i+1} 章..."):
+                                # 临时调用 LLM 进行润色
+                                from src.nodes import get_llm
+                                from langchain_core.messages import HumanMessage
+                                
+                                llm = get_llm()
+                                polish_prompt = f"""
+                                请作为一位科技媒体主编，对下面的文章段落进行深度润色。
+                                
+                                【原内容】
+                                {new_txt}
+                                
+                                【润色要求】
+                                1. **语气更犀利**：增加行业洞察力，拒绝平淡。
+                                2. **增加类比**：如果涉及技术概念，请加入通俗易懂的类比。
+                                3. **优化标题**：如果标题太死板，请改为更有吸引力的新闻式标题。
+                                4. **金句提炼**：适当增加引用块（Blockquote）来强调核心观点。
+                                
+                                请直接输出润色后的 Markdown 内容。
+                                """
+                                
+                                polished_content = llm.invoke([HumanMessage(content=polish_prompt)]).content
+                                
+                                # 更新并保存
+                                outline_data[i]['content'] = polished_content
+                                update_project_outline(project_id, outline_data)
+                                st.rerun()
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
