@@ -1021,10 +1021,6 @@ def render_deep_writing_mode():
         
         st.markdown("---")
         
-        # --- 全文预览与导出 ---
-        import re
-        import base64
-
         # 1. 获取数据
         current_outline = project.get('outline_data', [])
         raw_title = project.get('title', '未命名文档')
@@ -1033,6 +1029,7 @@ def render_deep_writing_mode():
         # === 修复核心 1: 清洗文件名 ===
         # 去掉 Emoji、空格和特殊符号，只保留中文、英文、数字、下划线
         # 这一步非常关键，否则浏览器下载会卡在 100%
+        import re
         clean_title = re.sub(r'[^\w\u4e00-\u9fa5\-_]', '_', raw_title)
         # 防止文件名太长
         if len(clean_title) > 50: clean_title = clean_title[:50]
@@ -1044,131 +1041,283 @@ def render_deep_writing_mode():
             if content:
                 full_markdown += f"## {sec['title']}\n\n{content}\n\n"
         
-        # 3. 预览
-        st.markdown("### 📄 全文预览")
-        with st.container(border=True, height=600):
-            if not full_markdown.strip() or len(current_outline) == 0:
-                st.info("暂无内容，请先在\"正文写作\"标签页生成文章。")
-            else:
-                st.markdown(full_markdown)
-
-        st.markdown("---")
-        st.subheader("📥 导出文档")
+        # 添加tabs定义
+        tab1, tab2, tab3 = st.tabs(["📝 大纲编辑", "🚀 全文写作", "🖼️ 长图生成"])
         
-        if full_markdown.strip():
-            # 准备二进制数据
-            md_bytes = full_markdown.encode('utf-8')
-            
-            # HTML 生成逻辑
-            def create_html_bytes(md_text, doc_title):
-                import markdown
-                html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
-                html_str = f"""<!DOCTYPE html>
-                <html lang="zh-CN">
-                <head><meta charset="utf-8"><title>{doc_title}</title>
-                <style>body{{font-family:sans-serif;max-width:900px;margin:0 auto;padding:20px;line-height:1.6}}img{{max-width:100%}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px}}</style>
-                </head><body>{html_body}</body></html>"""
-                return html_str.encode('utf-8')
-
-            html_bytes = create_html_bytes(full_markdown, raw_title)
-
-            # === 方案 A: 标准 Streamlit 按钮 (文件名已修复) ===
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label="📄 下载 Markdown",
-                    data=md_bytes,
-                    file_name=f"{clean_title}.md", # 使用清洗后的文件名
-                    mime="text/markdown",
-                    key=f"btn_md_{pid}"
-                )
-            with col2:
-                st.download_button(
-                    label="🖨️ 下载 HTML",
-                    data=html_bytes,
-                    file_name=f"{clean_title}.html", # 使用清洗后的文件名
-                    mime="text/html",
-                    key=f"btn_html_{pid}"
-                )
-            
-            # === 方案 B: 备用下载链接 (Plan B) ===
-            # 如果按钮依然卡住，这个链接通过浏览器原生机制下载，几乎100%成功
-            st.caption("⚠️ 如果上方按钮点击后没反应或下载失败，请点击下方链接尝试：")
-            
-            def get_download_link(data_bytes, filename, text):
-                b64 = base64.b64encode(data_bytes).decode()
-                return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
-            
-            link_md = get_download_link(md_bytes, f"{clean_title}.md", "🔗 备用链接：点击下载 Markdown")
-            link_html = get_download_link(html_bytes, f"{clean_title}.html", "🔗 备用链接：点击下载 HTML")
-            
-            st.markdown(f"{link_md} &nbsp;&nbsp;|&nbsp;&nbsp; {link_html}", unsafe_allow_html=True)
-            
-        else:
-            st.warning("⚠️ 内容为空，无法下载。")
-        
-        # 结果展示区域 (显示已生成的内容)
-        for i, section in enumerate(outline_data):
-            with st.expander(f"📖 {section['title']}", expanded=True if not section.get('content') else False):
-                # 如果没内容，显示单章生成按钮
-                if not section.get('content'):
-                    if st.button(f"单独生成此章", key=f"single_gen_{i}"):
-                        # 单章生成逻辑 (复用上面的核心部分)
-                        with st.spinner("写作中..."):
-                            state = {
-                                "research_report": project['research_report'] or "",
-                                "current_outline": outline_data,
-                                "full_draft": current_full_draft, 
-                                "current_section_index": i,
-                                "project_id": project_id, "user_requirement": project['requirements'], "source_type": project['source_type'], "source_data": project['source_data']
-                            }
-                            res = drafting_graph.invoke(state)
-                            outline_data[i]['content'] = res["current_section_content"]
-                            update_project_outline(project_id, outline_data, project['research_report'] or "")
-                            st.rerun()
-                else:
-                    # 有内容，显示编辑框
-                    new_txt = st.text_area("内容", value=section['content'], height=400, key=f"sec_txt_{i}")
-                    
-                    col_save, col_polish = st.columns([1, 4])
-                    
-                    # --- 按钮 1: 保存修改 ---
-                    with col_save:
-                        if st.button("💾 保存", key=f"save_sec_{i}"):
-                            outline_data[i]['content'] = new_txt
-                            update_project_outline(project_id, outline_data)
-                            st.success("已保存")
-                    
-                    # --- 按钮 2: [新增] 深度润色 ---
-                    with col_polish:
-                        if st.button("✨ 深度润色 (主编模式)", key=f"polish_sec_{i}", help="使用高级指令重写本章，增加洞察力和类比"):
-                            with st.spinner(f"AI 主编正在重写第 {i+1} 章..."):
-                                # 临时调用 LLM 进行润色
-                                from src.nodes import get_llm
-                                from langchain_core.messages import HumanMessage
-                                
-                                llm = get_llm()
-                                polish_prompt = f"""
-                                请作为一位科技媒体主编，对下面的文章段落进行深度润色。
-                                
-                                【原内容】
-                                {new_txt}
-                                
-                                【润色要求】
-                                1. **语气更犀利**：增加行业洞察力，拒绝平淡。
-                                2. **增加类比**：如果涉及技术概念，请加入通俗易懂的类比。
-                                3. **优化标题**：如果标题太死板，请改为更有吸引力的新闻式标题。
-                                4. **金句提炼**：适当增加引用块（Blockquote）来强调核心观点。
-                                
-                                请直接输出润色后的 Markdown 内容。
-                                """
-                                
-                                polished_content = llm.invoke([HumanMessage(content=polish_prompt)]).content
-                                
-                                # 更新并保存
-                                outline_data[i]['content'] = polished_content
-                                update_project_outline(project_id, outline_data)
+        # --- TAB 1: 大纲编辑 ---
+        with tab1:
+            # 结果展示区域 (显示已生成的内容)
+            for i, section in enumerate(outline_data):
+                with st.expander(f"📖 {section['title']}", expanded=True if not section.get('content') else False):
+                    # 如果没内容，显示单章生成按钮
+                    if not section.get('content'):
+                        if st.button(f"单独生成此章", key=f"single_gen_{i}"):
+                            # 单章生成逻辑 (复用上面的核心部分)
+                            with st.spinner("写作中..."):
+                                state = {
+                                    "research_report": project['research_report'] or "",
+                                    "current_outline": outline_data,
+                                    "full_draft": current_full_draft, 
+                                    "current_section_index": i,
+                                    "project_id": project_id, "user_requirement": project['requirements'], "source_type": project['source_type'], "source_data": project['source_data']
+                                }
+                                res = drafting_graph.invoke(state)
+                                outline_data[i]['content'] = res["current_section_content"]
+                                update_project_outline(project_id, outline_data, project['research_report'] or "")
                                 st.rerun()
+                    else:
+                        # 有内容，显示编辑框
+                        new_txt = st.text_area("内容", value=section['content'], height=400, key=f"sec_txt_{i}")
+                        
+                        col_save, col_polish = st.columns([1, 4])
+                        
+                        # --- 按钮 1: 保存修改 ---
+                        with col_save:
+                            if st.button("💾 保存", key=f"save_sec_{i}"):
+                                outline_data[i]['content'] = new_txt
+                                update_project_outline(project_id, outline_data)
+                                st.success("已保存")
+                        
+                        # --- 按钮 2: [新增] 深度润色 ---
+                        with col_polish:
+                            if st.button("✨ 深度润色 (主编模式)", key=f"polish_sec_{i}", help="使用高级指令重写本章，增加洞察力和类比"):
+                                with st.spinner(f"AI 主编正在重写第 {i+1} 章..."):
+                                    # 临时调用 LLM 进行润色
+                                    from src.nodes import get_llm
+                                    from langchain_core.messages import HumanMessage
+                                    
+                                    llm = get_llm()
+                                    polish_prompt = f"""
+                                    请作为一位科技媒体主编，对下面的文章段落进行深度润色。
+                                    
+                                    【原内容】
+                                    {new_txt}
+                                    
+                                    【润色要求】
+                                    1. **语气更犀利**：增加行业洞察力，拒绝平淡。
+                                    2. **增加类比**：如果涉及技术概念，请加入通俗易懂的类比。
+                                    3. **优化标题**：如果标题太死板，请改为更有吸引力的新闻式标题。
+                                    4. **金句提炼**：适当增加引用块（Blockquote）来强调核心观点。
+                                    
+                                    请直接输出润色后的 Markdown 内容。
+                                    """
+                                    
+                                    polished_content = llm.invoke([HumanMessage(content=polish_prompt)]).content
+                                    
+                                    # 更新并保存
+                                    outline_data[i]['content'] = polished_content
+                                    update_project_outline(project_id, outline_data)
+                                    st.rerun()
+        
+        # --- TAB 2: 全文写作 ---
+        with tab2:
+            st.subheader("📝 全文预览")
+            with st.container(border=True, height=600):
+                if not full_markdown.strip() or len(current_outline) == 0:
+                    st.info("暂无内容，请先在\"正文写作\"标签页生成文章。")
+                else:
+                    st.markdown(full_markdown)
+
+            st.markdown("---")
+            st.subheader("📥 导出文档")
+            
+            if full_markdown.strip():
+                # 准备二进制数据
+                md_bytes = full_markdown.encode('utf-8')
+                
+                # HTML 生成逻辑
+                def create_html_bytes(md_text, doc_title):
+                    import markdown
+                    html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
+                    html_str = f"""<!DOCTYPE html>
+                    <html lang="zh-CN">
+                    <head><meta charset="utf-8"><title>{doc_title}</title>
+                    <style>body{{font-family:sans-serif;max-width:900px;margin:0 auto;padding:20px;line-height:1.6}}img{{max-width:100%}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:8px}}</style>
+                    </head><body>{html_body}</body></html>"""
+                    return html_str.encode('utf-8')
+
+                html_bytes = create_html_bytes(full_markdown, raw_title)
+
+                # === 方案 A: 标准 Streamlit 按钮 (文件名已修复) ===
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        label="📄 下载 Markdown",
+                        data=md_bytes,
+                        file_name=f"{clean_title}.md", # 使用清洗后的文件名
+                        mime="text/markdown",
+                        key=f"btn_md_{pid}"
+                    )
+                with col2:
+                    st.download_button(
+                        label="🖨️ 下载 HTML",
+                        data=html_bytes,
+                        file_name=f"{clean_title}.html", # 使用清洗后的文件名
+                        mime="text/html",
+                        key=f"btn_html_{pid}"
+                    )
+                
+                # === 方案 B: 备用下载链接 (Plan B) ===
+                # 如果按钮依然卡住，这个链接通过浏览器原生机制下载，几乎100%成功
+                st.caption("⚠️ 如果上方按钮点击后没反应或下载失败，请点击下方链接尝试：")
+                
+                def get_download_link(data_bytes, filename, text):
+                    import base64
+                    b64 = base64.b64encode(data_bytes).decode()
+                    return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
+                
+                link_md = get_download_link(md_bytes, f"{clean_title}.md", "🔗 备用链接：点击下载 Markdown")
+                link_html = get_download_link(html_bytes, f"{clean_title}.html", "🔗 备用链接：点击下载 HTML")
+                
+                st.markdown(f"{link_md} &nbsp;&nbsp;|&nbsp;&nbsp; {link_html}", unsafe_allow_html=True)
+                
+            else:
+                st.warning("⚠️ 内容为空，无法下载。")
+        
+        # --- TAB 3: 全文预览与生成长图 ---
+        with tab3:
+            import streamlit.components.v1 as components
+            import markdown
+
+            # 包含调研报告（可选，如果太长可以注释掉）
+            full_markdown_with_report = full_markdown
+            if project.get('research_report'):
+               full_markdown_with_report += "\n\n## 附录：深度调研报告\n\n" + project['research_report'] + "\n\n---\n\n"
+            
+            if not full_markdown.strip() or len(current_outline) == 0:
+                st.warning("⚠️ 暂无内容，请先在\"正文写作\"标签页生成文章。")
+            else:
+                st.subheader("🖼️ 文章长图生成")
+                st.caption("点击下方按钮，将生成一张包含全文的长图片，方便手机分享。")
+
+                # 3. 将 Markdown 转为 HTML
+                html_body = markdown.markdown(full_markdown_with_report, extensions=['tables', 'fenced_code'])
+                
+                # 4. 构建包含截图脚本的完整 HTML
+                # 这里我们注入了 html2canvas 库，它能让浏览器把网页变成图片
+                custom_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>{raw_title}</title>
+                    <!-- 引入 html2canvas 库 -->
+                    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+                    <style>
+                        body {{
+                            background-color: #f0f2f6; /* 背景灰色，突出卡片 */
+                            font-family: "Microsoft YaHei", sans-serif;
+                            padding: 20px;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                        }}
+                        /* 模拟一张A4纸或长卡片的样式 */
+                        #capture-node {{
+                            background-color: white;
+                            width: 100%;
+                            max-width: 800px; /* 限制宽度，手机看更舒服 */
+                            padding: 40px;
+                            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                            border-radius: 8px;
+                            margin-bottom: 20px;
+                            color: #333;
+                            line-height: 1.8;
+                        }}
+                        h1  {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 20px; }}
+                        h2  {{ color: #2980b9; margin-top: 30px; border-left: 5px solid #2980b9; padding-left: 10px; background: #f9f9f9; padding: 5px 10px; }}
+                        code  {{ background: #f4f4f4; padding: 2px 5px; border-radius: 4px; color: #d63384; }}
+                        pre  {{ background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+                        table  {{ border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 0.9em; }}
+                        th, td  {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                        th  {{ background-color: #f2f2f2; }}
+                        blockquote  {{ border-left: 4px solid #ccc; margin: 0; padding-left: 16px; color: #666; }}
+                        
+                        /* 按钮样式 */
+                        .btn-container {{
+                            position: fixed;
+                            bottom: 20px;
+                            right: 20px;
+                            z-index: 999;
+                        }}
+                        .download-btn {{
+                            background-color: #ff4b4b;
+                            color: white;
+                            border: none;
+                            padding: 15px 30px;
+                            border-radius: 30px;
+                            font-size: 16px;
+                            font-weight: bold;
+                            cursor: pointer;
+                            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+                            transition: all 0.3s;
+                        }}
+                        .download-btn:hover  {{ background-color: #ff2b2b; transform: translateY(-2px); }}
+                        .download-btn:active  {{ transform: translateY(0); }}
+                        
+                        /* 加上水印 */
+                        .watermark {{
+                            text-align: center;
+                            margin-top: 40px;
+                            color: #ccc;
+                            font-size: 12px;
+                            border-top: 1px dashed #eee;
+                            padding-top: 10px;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <!-- 悬浮下载按钮 -->
+                    <div class="btn-container">
+                        <button class="download-btn" onclick="generateImage()" id="dl-btn">📸 保存为长图</button>
+                    </div>
+
+                    <!-- 要截图的内容区域 -->
+                    <div id="capture-node">
+                        {html_body}
+                        <div class="watermark">Generated by DeepSeek Writing Assistant</div>
+                    </div>
+
+                    <script>
+                        function generateImage() {{
+                            var btn = document.getElementById('dl-btn');
+                            var originalText = btn.innerText;
+                            btn.innerText = "⏳ 生成中...";
+                            btn.style.backgroundColor = "#ccc";
+                            
+                            var node = document.getElementById('capture-node');
+                            
+                            html2canvas(node, {{
+                                scale: 2, // 提高清晰度 (2倍图)
+                                useCORS: true, // 允许跨域图片
+                                backgroundColor: "#ffffff"
+                            }}).then(function(canvas) {{
+                                // 创建下载链接
+                                var link = document.createElement('a');
+                                link.download = '{raw_title}_长图.png';
+                                link.href = canvas.toDataURL("image/png");
+                                link.click();
+                                
+                                // 恢复按钮
+                                btn.innerText = "✅ 下载成功！";
+                                setTimeout(() => {{
+                                    btn.innerText = originalText;
+                                    btn.style.backgroundColor = "#ff4b4b";
+                                }}, 2000);
+                            }}).catch(function(err) {{
+                                console.error(err);
+                                btn.innerText = "❌ 生成失败";
+                                alert("生成图片失败，请尝试刷新页面。");
+                            }});
+                        }}
+                    </script>
+                </body>
+                </html>
+                """
+                
+                # 5. 渲染 HTML 组件
+                # height 设置得高一点，让用户能预览
+                components.html(custom_html, height=800, scrolling=True)
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
