@@ -1040,54 +1040,101 @@ def render_deep_writing_mode():
                 full_markdown += f"{content}\n\n"
         
         # 2. 渲染预览
-        with st.container(border=True):
+        with st.container(border=True, height=600):  # 固定高度，内容滚动
             st.markdown(full_markdown)
         
         st.markdown("---")
         st.subheader("📥 导出文档")
         
-        col_dl_1, col_dl_2 = st.columns(2)
+        # 3. 准备下载数据 (关键修复：转为 bytes)
+        # Markdown 转 Bytes
+        md_bytes = full_markdown.encode('utf-8')
         
-        # 选项 A: 下载 Markdown (原生支持)
-        with col_dl_1:
-            st.download_button(
-                label="📄 下载 Markdown 源码",
-                data=full_markdown,
-                file_name=f"{title}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        
-        # 选项 B: 导出为 HTML (用于打印 PDF)
-        # 我们构建一个包含 CSS 样式的 HTML 模板，确保打印好看
-        def create_html_content(md_text, doc_title):
+        # HTML 转 Bytes (包含完整的头部和样式)
+        def create_html_bytes(md_text, doc_title):
             import markdown
-            html_body = markdown.markdown(md_text)
+            # 转换 markdown 到 html body
+            html_body = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
             
-            return f"""
+            # 拼接完整 HTML
+            html_str = f"""
             <!DOCTYPE html>
-            <html>
+            <html lang="zh-CN">
             <head>
                 <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>{doc_title}</title>
                 <style>
                     body {{
-                        font-family: "Microsoft YaHei", "SimHei", -apple-system, sans-serif;
-                        max-width: 800px;
+                        font-family: "Microsoft YaHei", "SimHei", -apple-system, BlinkMacSystemFont, sans-serif;
+                        max-width: 900px;
                         margin: 0 auto;
                         padding: 40px;
                         line-height: 1.8;
+                        color: #2c3e50;
+                        background-color: #fff;
+                    }}
+                    h1 {{
+                        text-align: center;
+                        border-bottom: 2px solid #eaeaea;
+                        padding-bottom: 20px;
+                        margin-bottom: 40px;
+                    }}
+                    h2 {{
+                        color: #2980b9;
+                        margin-top: 40px;
+                        margin-bottom: 20px;
+                        border-left: 5px solid #2980b9;
+                        padding-left: 15px;
+                        background: #f9f9f9;
+                        padding-top: 5px;
+                        padding-bottom: 5px;
+                    }}
+                    h3 {{
+                        color: #34495e;
+                        margin-top: 30px;
+                    }}
+                    p {{
+                        margin-bottom: 15px;
+                        text-align: justify;
+                    }}
+                    blockquote {{
+                        border-left: 4px solid #ddd;
+                        padding-left: 15px;
+                        color: #777;
+                        font-style: italic;
+                    }}
+                    code {{
+                        background: #f4f4f4;
+                        padding: 2px 5px;
+                        border-radius: 3px;
+                        font-family: Consolas, monospace;
+                    }}
+                    pre {{
+                        background: #f8f8f8;
+                        padding: 15px;
+                        border-radius: 5px;
+                        overflow-x: auto;
+                    }}
+                    table {{
+                        border-collapse: collapse;
+                        width: 100%;
+                        margin: 20px 0;
+                    }}
+                    th, td {{
+                        border: 1px solid #ddd;
+                        padding: 12px;
+                        text-align: left;
+                    }}
+                    th {{
+                        background-color: #f2f2f2;
                         color: #333;
                     }}
-                    h1 {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #eaeaea; padding-bottom: 20px; }}
-                    h2 {{ color: #2980b9; margin-top: 30px; border-left: 5px solid #2980b9; padding-left: 10px; }}
-                    p {{ margin-bottom: 15px; text-align: justify; }}
-                    code {{ background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }}
-                    pre {{ background: #f8f8f8; padding: 15px; border-radius: 5px; overflow-x: auto; }}
-                    /* 打印样式优化 */
-                    @media print {{
-                        body {{ max-width: 100%; padding: 0; }}
-                        h2 {{ page-break-before: always; }}  /* 章节强制换页，可选 */
+                    img {{
+                        max-width: 100%;
+                        height: auto;
+                        display: block;
+                        margin: 20px auto;
                     }}
                 </style>
             </head>
@@ -1096,15 +1143,29 @@ def render_deep_writing_mode():
             </body>
             </html>
             """
+            return html_str.encode('utf-8')
+
+        html_bytes = create_html_bytes(full_markdown, title)
+
+        # 4. 渲染按钮
+        col_dl_1, col_dl_2 = st.columns(2)
+        
+        with col_dl_1:
+            st.download_button(
+                label="📄 下载 Markdown 源码",
+                data=md_bytes,  # 传入 bytes
+                file_name=f"{title}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
         
         with col_dl_2:
-            html_content = create_html_content(full_markdown, title)
             st.download_button(
-                label="🖨️ 导出为 HTML (推荐转 PDF)",
-                data=html_content,
+                label="🖨️ 导出为排版好的 HTML (推荐)",
+                data=html_bytes,  # 传入 bytes
                 file_name=f"{title}.html",
                 mime="text/html",
-                help="下载后在浏览器打开，使用 Ctrl+P (打印) -> 另存为 PDF，效果最佳。",
+                help="下载后双击打开，显示效果最好。可右键->打印->另存为PDF。",
                 use_container_width=True
             )
         
