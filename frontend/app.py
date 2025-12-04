@@ -936,22 +936,18 @@ def render_deep_writing_mode():
                         st.success("已保存")
                         st.rerun()
         
-        # --- TAB 2: 全文写作 ---
+        # --- TAB 2: 全文写作 (恢复生成逻辑) ---
         with tab2:
-            st.subheader("📝 全文预览")
-            with st.container(border=True, height=600):
-                if not full_markdown.strip() or len(current_outline) == 0:
-                    st.info("暂无内容，请先在\"正文写作\"标签页生成文章。")
-                else:
-                    st.markdown(full_markdown)
-
-            # 底部操作区
-            st.markdown("---")
-            _, col_gen = st.columns([2, 1])
+            st.subheader("📝 全文预览与生成")
+            
+            # 顶部操作栏
+            col_gen, col_ph = st.columns([1, 3])
             with col_gen:
-                 if st.button("🚀 生成完整文章", type="primary", use_container_width=True):
+                 # === 修复核心：这里是"生成完整文章"的按钮 ===
+                 if st.button("🚀 生成/更新 完整文章", type="primary", use_container_width=True):
                      outline_data = project['outline_data']
                      current_full_draft = ""
+                     # 简单拼接已有草稿作为 Context
                      for sec in outline_data:
                          if sec.get('content'):
                              current_full_draft += f"## {sec['title']}\n\n{sec['content']}\n\n"
@@ -959,6 +955,7 @@ def render_deep_writing_mode():
                      ls_container = st.container()
                      
                      for i, section in enumerate(outline_data):
+                         # 如果已有内容，且不为空，暂时跳过 (未来可以加 Force Rewrite 选项)
                          if section.get('content') and len(section['content']) > 10:
                              continue
                          
@@ -968,7 +965,7 @@ def render_deep_writing_mode():
                                 "user_requirement": project['requirements'],
                                 "source_type": project['source_type'],
                                 "source_data": project['source_data'],
-                                "full_content": full_content_cache, # <--- 核心
+                                "full_content": full_content_cache, # <--- 核心：注入全文
                                 "research_report": project['research_report'] or "",
                                 "current_outline": outline_data,
                                 "full_draft": current_full_draft, 
@@ -978,16 +975,27 @@ def render_deep_writing_mode():
                                  res = drafting_graph.invoke(state)
                                  new_content = res["current_section_content"]
                                  outline_data[i]['content'] = new_content
+                                 
+                                 # 更新 Context
                                  current_full_draft += f"## {section['title']}\n\n{new_content}\n\n"
+                                 
+                                 # 存库
                                  update_project_outline(project_id, outline_data, project['research_report'])
-                                 status.update(label="完成", state="complete")
+                                 status.update(label="完成", state="complete", expanded=False)
                              except Exception as e:
                                  status.write(f"Error: {e}")
                                  status.update(label="失败", state="error")
                                  break
-                     st.success("全文生成完毕")
+                     st.success("全文生成完毕！")
+                     time.sleep(1)
                      st.rerun()
-        
+
+            with st.container(border=True, height=600):
+                if not full_markdown.strip() or len(current_outline) == 0:
+                    st.info("暂无内容，请点击上方按钮生成文章。")
+                else:
+                    st.markdown(full_markdown)
+
         # --- TAB 3: 分享与发布 ---
         with tab3:
             import streamlit.components.v1 as components
