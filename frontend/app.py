@@ -1004,6 +1004,14 @@ def render_deep_writing_mode():
         # 1. 获取数据
         current_outline = project.get('outline_data', [])
         raw_title = project.get('title', '未命名文档')
+                    
+        # === 修复核心 1: 清洗文件名 ===
+        # 去掉 Emoji、空格和特殊符号，只保留中文、英文、数字、下划线
+        # 这一步非常关键，否则浏览器下载会卡在 100%
+        import re
+        clean_title = re.sub(r'[^\w\u4e00-\u9fa5\-_]', '_', raw_title)
+        # 防止文件名太长
+        if len(clean_title) > 50: clean_title = clean_title[:50]
         pid = project_id
         
         # === 修复核心 1: 清洗文件名 ===
@@ -1024,94 +1032,81 @@ def render_deep_writing_mode():
         # 添加tabs定义
         tab1, tab2, tab3 = st.tabs(["📝 大纲编辑", "🚀 全文写作", "🖼️ 长图生成"])
         
-        # --- TAB 1: 调研与大纲管理 ---
+        # --- TAB 1: 大纲与结构策划 ---
         with tab1:
-            col_rep, col_out = st.columns([1, 1])
+            # 移除左右分栏，直接全宽显示
+            st.markdown("### 📝 全局结构策划")
+            st.caption("这里是文章的骨架。您可以手动调整，或让 AI 基于新思路重构全文。")
             
-            # 左侧：调研报告
-            with col_rep:
-                st.markdown("### 🕵️‍♂️ 深度调研报告")
-                new_report = st.text_area("报告内容", value=project.get('research_report', ''), height=600, key="report_editor")
-                if new_report != project.get('research_report', ''):
-                    if st.button("💾 保存报告修改"):
-                        update_project_outline(project_id, project['outline_data'], new_report)
-                        st.success("报告已更新")
-                        st.rerun()
+            outline = project.get('outline_data', [])
             
-            # 右侧：大纲编辑器 (修复删除逻辑)
-            with col_out:
-                st.markdown("### 📝 大纲编辑器")
+            # --- A. AI 深度重构区 ---
+            with st.container(border=True):
+                st.markdown("**🤖 AI 智能重构**")
+                st.caption("输入指令后，AI 将同步更新底层的【调研报告】并生成【新大纲】。")
                 
-                outline = project.get('outline_data', [])
-                
-                # --- A. Agent 智能修改区 ---
-                with st.container(border=True):
-                    c_ai_1, c_ai_2 = st.columns([3, 1])
-                    with c_ai_1:
-                        ai_instruction = st.text_input("🤖 AI 指令", placeholder="例如：把第三章拆分成两章")
-                    with c_ai_2:
-                        st.write("") 
+                c_ai_1, c_ai_2 = st.columns([4, 1])
+                with c_ai_1:
+                    ai_instruction = st.text_input("重构指令", placeholder="例如：增加一个关于商业化落地的章节，并调整前两章的顺序", label_visibility="collapsed", key="ai_refine_input")
+                with c_ai_2:
+                    if st.button("✨ 执行重构", use_container_width=True, type="primary"):
+                        if ai_instruction:
+                            # 调用流式修改 (Refine Graph 现在会更新 report 和 outline)
+                            if run_refine_stream(project_id, outline, ai_instruction):
+                                st.rerun()
+
+            st.markdown("---")
+
+            # --- B. 手动微调区 ---
+            delete_index = -1
+            updated_outline = []
+            has_manual_change = False
+            
+            for i, section in enumerate(outline):
+                # 使用 Expander 包裹，让界面更紧凑
+                with st.expander(f"📌 第 {i+1} 章：{section['title']}", expanded=False):
+                    c1, c2 = st.columns([6, 1])
+                    with c1:
+                        new_title = st.text_input("章节标题", value=section['title'], key=f"t_{i}")
+                        new_desc = st.text_area("写作指引 (Prompt)", value=section['desc'], height=100, key=f"d_{i}", help="指导 AI 这一章该写什么")
+                    with c2:
                         st.write("")
-                        if st.button("🪄 AI 修改", use_container_width=True):
-                            if ai_instruction:
-                                if run_refine_stream(project_id, outline, ai_instruction):
-                                    st.rerun()
-
-                st.divider()
-
-                # --- B. 手动编辑区 (修复删除逻辑) ---
-                # 使用 delete_index 标记要删除的项
-                delete_index = -1
-                updated_outline = []
-                has_manual_change = False
+                        st.write("")
+                        if st.button("🗑️ 删除", key=f"del_{i}"):
+                            delete_index = i
                 
-                for i, section in enumerate(outline):
-                    with st.expander(f"#{i+1} {section['title']}", expanded=False):
-                        c1, c2 = st.columns([5, 1])
-                        with c1:
-                            new_title = st.text_input(f"标题", value=section['title'], key=f"title_{i}")
-                            new_desc = st.text_area(f"指引", value=section['desc'], key=f"desc_{i}", height=70)
-                        with c2:
-                            st.write("")
-                            st.write("")
-                            # 核心修复：点击删除后，记录索引
-                            if st.button("🗑️", key=f"del_{i}", help="删除此章节"):
-                                delete_index = i
+                    if new_title != section['title'] or new_desc != section['desc']:
+                        has_manual_change = True
                         
-                        # 检查是否有内容变更
-                        if new_title != section['title'] or new_desc != section['desc']:
-                            has_manual_change = True
-                        
-                        updated_outline.append({
-                            "title": new_title, 
-                            "desc": new_desc, 
-                            "content": section.get("content", "")
-                        })
+                    updated_outline.append({
+                        "title": new_title, 
+                        "desc": new_desc, 
+                        "content": section.get("content", "")
+                    })
 
-                # --- C. 执行删除操作 ---
-                # 如果用户点击了删除，立即更新数据库并刷新
-                if delete_index != -1:
-                    outline.pop(delete_index) # 从原列表中移除
+            # --- 执行删除 ---
+            if delete_index != -1:
+                outline.pop(delete_index)
+                # 即使是手动删除，也建议同步保存报告（虽然报告内容没变，但要保持接口一致）
+                update_project_outline(project_id, outline, project.get('research_report'))
+                st.rerun()
+
+            st.write("")
+            
+            # --- C. 底部操作栏 ---
+            col_add, col_save = st.columns([1, 1])
+            with col_add:
+                if st.button("➕在该位置追加新章节", use_container_width=True):
+                    outline.append({"title": "新章节", "desc": "在此输入本章的核心论点...", "content": ""})
                     update_project_outline(project_id, outline, project.get('research_report'))
                     st.rerun()
-
-                # --- D. 底部操作区 ---
-                c_add, c_save = st.columns(2)
-                
-                with c_add:
-                    if st.button("➕ 添加新章节", use_container_width=True):
-                        # 添加到末尾
-                        outline.append({"title": "新章节", "desc": "请输入本章的写作要点...", "content": ""})
-                        update_project_outline(project_id, outline, project.get('research_report'))
+            
+            with col_save:
+                if has_manual_change:
+                    if st.button("💾 保存所有文字修改", type="primary", use_container_width=True):
+                        update_project_outline(project_id, updated_outline, project.get('research_report'))
+                        st.success("已保存")
                         st.rerun()
-                
-                with c_save:
-                    # 仅当有文字修改时才显示保存按钮 (删除和添加已实时处理)
-                    if has_manual_change:
-                        if st.button("💾 确认文字修改", type="primary", use_container_width=True):
-                            update_project_outline(project_id, updated_outline, project.get('research_report'))
-                            st.success("大纲已更新！")
-                            st.rerun()
         
         # --- TAB 2: 全文写作 ---
         with tab2:
@@ -1178,56 +1173,51 @@ def render_deep_writing_mode():
             else:
                 st.warning("⚠️ 内容为空，无法下载。")
         
-        # --- TAB 3: 杂志级长图生成 ---
+        # --- TAB 3: 分享与发布 ---
         with tab3:
             import streamlit.components.v1 as components
             import markdown
             from src.write_flow import generate_viral_card_content
 
-            # 1. 准备数据
             current_outline = project.get('outline_data', [])
             raw_title = project.get('title', '未命名文档')
             
-            # 拼接正文
-            full_markdown_for_ai = ""
+            # 拼接正文 (用于 AI 摘要和 显示)
             full_markdown_display = ""
+            full_markdown_text = ""
             
             for sec in current_outline:
                 content = sec.get('content', '')
                 if content:
-                    full_markdown_for_ai += f"{sec['title']}\n{content}\n"
+                    full_markdown_text += f"{sec['title']}\n{content}\n"
+                    # 这里稍微处理一下，让长图里的标题更明显
                     full_markdown_display += f"## {sec['title']}\n\n{content}\n\n"
 
             if not full_markdown_display.strip():
-                st.warning("⚠️ 暂无内容，请先在\"正文写作\"页生成文章。")
+                st.info("👈 请先在【正文写作】页生成文章内容。")
             else:
-                st.subheader("🎨 生成分享长图")
-                
-                # 2. 自动生成/编辑 病毒摘要
-                if "viral_summary" not in st.session_state:
-                    st.session_state.viral_summary = ""
-                
-                col_sum_1, col_sum_2 = st.columns([3, 1])
-                with col_sum_1:
-                    if not st.session_state.viral_summary:
-                         with st.spinner("正在提炼社交媒体摘要..."):
-                             # 调用后端函数
-                             st.session_state.viral_summary = generate_viral_card_content(raw_title, full_markdown_for_ai)
-                    
-                    final_summary = st.text_area("编辑导语 (卡片头部)", value=st.session_state.viral_summary, height=120)
-                
-                with col_sum_2:
-                    st.write("")
-                    if st.button("🔄 重写导语"):
+                col_view, col_action = st.columns([3, 1])
+                with col_view:
+                    st.subheader("🖼️ 知识长图预览")
+                with col_action:
+                    # 可以在这里放重置摘要的按钮
+                    if st.button("🔄 刷新导语"):
                         st.session_state.viral_summary = ""
                         st.rerun()
 
-                st.markdown("---")
+                # --- 自动生成导语 ---
+                if "viral_summary" not in st.session_state:
+                    st.session_state.viral_summary = ""
+                
+                if not st.session_state.viral_summary:
+                     with st.spinner("正在提炼社交媒体摘要..."):
+                         st.session_state.viral_summary = generate_viral_card_content(raw_title, full_markdown_text)
+                
+                # --- 渲染 HTML ---
+                html_body = markdown.markdown(full_markdown_display, extensions=['fenced_code'])
+                summary_html = markdown.markdown(st.session_state.viral_summary)
 
-                # 3. 渲染 HTML (Inject CSS)
-                html_body = markdown.markdown(full_markdown_display, extensions=['fenced_code']) # 不加载 tables 扩展
-                summary_html = markdown.markdown(final_summary)
-
+                # CSS 样式：极致的去表格化，杂志风
                 magazine_html = f"""
                 <!DOCTYPE html>
                 <html>
@@ -1238,7 +1228,7 @@ def render_deep_writing_mode():
                     <style>
                         *  box-sizing: border-box; margin: 0; padding: 0; 
                         body {{
-                            background-color: #f0f2f6;
+                            background-color: #f2f4f7;
                             font-family: 'Noto Sans SC', sans-serif;
                             padding: 20px;
                             display: flex;
@@ -1248,61 +1238,61 @@ def render_deep_writing_mode():
                         
                         #poster-node {{
                             width: 100%;
-                            max-width: 450px; /* 朋友圈完美宽度 */
+                            max-width: 450px;
                             background: white;
-                            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-                            overflow: hidden;
+                            box-shadow: 0 15px 40px rgba(0,0,0,0.1);
                         }}
 
-                        /* 头部设计 */
+                        /* 头部 */
                         .header-banner {{
-                            background: linear-gradient(135deg, #000000 0%, #434343 100%); /* 高级黑金风格 */
-                            color: #fdfbf7;
-                            padding: 50px 30px 40px;
-                            text-align: center;
+                            background: #1a1a1a;
+                            color: #f0f0f0;
+                            padding: 60px 30px 40px;
+                            text-align: left;
+                            position: relative;
+                        }}
+                        .header-banner::after {{
+                            content: '';
+                            position: absolute;
+                            bottom: 0;
+                            left: 30px;
+                            width: 40px;
+                            height: 4px;
+                            background: #ff4b4b;
                         }}
                         .header-title {{
                             font-family: 'Noto Serif SC', serif;
-                            font-size: 24px;
-                            line-height: 1.4;
+                            font-size: 28px;
+                            line-height: 1.3;
+                            font-weight: 700;
                             margin-bottom: 10px;
-                            font-weight: 700;
                         }}
-                       
-                        /* 导语卡片 */
-                        .summary-card {{
-                            margin: 20px;
-                            background: #fff9e6;
-                            padding: 20px;
-                            border-radius: 12px;
-                            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-                            border-left: 4px solid #ffb84d;
-                            font-size: 14px;
-                            color: #555;
-                            line-height: 1.6;
-                        }}
+                        .header-sub  opacity: 0.6; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; 
 
-                        /* 正文区域 */
-                        .content-body {{
-                            padding: 10px 30px 40px 30px;
-                            color: #333;
-                            line-height: 1.8;
-                            font-size: 15px;
+                        /* 导语区 */
+                        .summary-card {{ 
+                            padding: 30px; 
+                            background: #fff;
+                            font-size: 14px; 
+                            line-height: 1.7;
+                            color: #555;
+                            border-bottom: 1px solid #eee;
                         }}
+                        .summary-card p  margin-bottom: 10px; 
+                        .summary-card strong  color: #000; font-weight: 700; 
+
+                        /* 正文区 */
+                        .content-body  padding: 30px; color: #222; line-height: 1.8; font-size: 15px; text-align: justify; 
                         
-                        /* 排版细节 */
                         h2 {{
-                            margin-top: 30px;
-                            margin-bottom: 15px;
-                            font-size: 18px;
+                            margin-top: 40px;
+                            margin-bottom: 20px;
+                            font-size: 19px;
                             font-weight: 700;
-                            color: #222;
-                            border-bottom: 1px dashed #eee;
-                            padding-bottom: 8px;
+                            color: #111;
                         }}
-                        p {{ margin-bottom: 15px; text-align: justify; }}
+                        p {{ margin-bottom: 16px; }}
                         
-                        /* 引用块美化 */
                         blockquote {{
                             background: #f8f9fa;
                             border-left: 4px solid #4ca1af;
@@ -1311,12 +1301,7 @@ def render_deep_writing_mode():
                             color: #555;
                             border-radius: 0 8px 8px 0;
                         }}
-
-                        /* 列表美化 */
-                        ul, ol {{ padding-left: 20px; }}
-                        li {{ margin-bottom: 8px; }}
-
-                        /* 代码块 */
+                        
                         pre {{
                             background: #2d2d2d;
                             color: #f8f8f2;
@@ -1326,102 +1311,50 @@ def render_deep_writing_mode():
                             font-size: 12px;
                             margin: 15px 0;
                         }}
-
-                        /* 底部署名 */
-                        .footer {{
-                            background-color: #f8f9fa;
-                            padding: 20px;
-                            text-align: center;
-                            border-top: 1px dashed #e0e0e0;
-                            color: #999;
-                            font-size: 12px;
-                        }}
-                        .footer strong {{ color: #4ca1af; }}
-
-                        /* 下载按钮容器 */
-                        .btn-wrapper {{
-                            position: fixed;
-                            bottom: 30px;
-                            right: 30px;
-                            z-index: 999;
-                        }}
-                        .dl-btn {{
-                            background: #222;
-                            color: white;
-                            border: none;
-                            padding: 12px 25px;
-                            border-radius: 50px;
-                            font-weight: bold;
-                            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-                            cursor: pointer;
-                            transition: all 0.3s ease;
-                        }}
-                        .dl-btn:hover {{ 
-                            transform: translateY(-2px);
-                            box-shadow: 0 7px 20px rgba(0, 0, 0, 0.4);
-                        }}
-
+                        
+                        ul, ol {{ padding-left: 20px; }}
+                        li {{ margin-bottom: 8px; }}
                     </style>
                 </head>
                 <body>
-                    <div class="btn-wrapper">
-                        <button class="dl-btn" onclick="genImage()" id="btn-save">📸 保存分享长图</button>
-                    </div>
-
-                    <!-- 长图主体 -->
                     <div id="poster-node">
-                        <!-- 头部 -->
                         <div class="header-banner">
                             <div class="header-title">{raw_title}</div>
+                            <div class="header-sub">DeepSeek 写作助手 · 精炼洞察</div>
                         </div>
-
-                        <!-- 导语 -->
+                        
                         <div class="summary-card">
                             {summary_html}
                         </div>
-
-                        <!-- 正文 -->
+                        
                         <div class="content-body">
                             {html_body}
                         </div>
-
-                        <!-- 底部 -->
-                        <div class="footer">
-                            Generated by <strong>DeepSeek Writing Agent</strong><br>
-                            让知识更有价值
-                        </div>
+                    </div>
+                    
+                    <div style="position: fixed; bottom: 30px; right: 30px; z-index: 999;">
+                        <button 
+                            onclick="genImage()" 
+                            style="background: #111; color: white; border: none; padding: 12px 25px; border-radius: 50px; font-weight: bold; box-shadow: 0 5px 15px rgba(0,0,0,0.2); cursor: pointer;"
+                            onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 7px 20px rgba(0,0,0,0.3)';"
+                            onmouseout="this.style.transform=''; this.style.boxShadow='0 5px 15px rgba(0,0,0,0.2)';"
+                        >
+                            📸 保存长图
+                        </button>
                     </div>
 
                     <script>
                         function genImage() {{
-                            var btn = document.getElementById('btn-save');
-                            btn.innerText = "⏳ 渲染中...";
-                            
                             var node = document.getElementById('poster-node');
-                            
                             html2canvas(node, {{
-                                scale: 2, // 高清
+                                scale: 2,
                                 useCORS: true,
-                                scrollY: -window.scrollY // 修复滚动偏移
+                                scrollY: -window.scrollY
                             }}).then(canvas => {{
                                 var link = document.createElement('a');
-                                link.download = '{raw_title}_杂志风长图.png';
+                                link.download = '{clean_title}_知识长图.png';
                                 link.href = canvas.toDataURL("image/png");
                                 link.click();
-                                
-                                // 恢复按钮状态
-                                setTimeout(() => {{
-                                    btn.innerText = "✅ 已保存";
-                                    setTimeout(() => {{
-                                        btn.innerText = "📸 保存分享长图";
-                                    }}, 2000);
-                                }}, 1000);
-                            }}).catch(err => {{
-                                console.error(err);
-                                btn.innerText = "❌ 保存失败";
-                                setTimeout(() => {{
-                                    btn.innerText = "📸 保存分享长图";
-                                }}, 2000);
                             }});
                         }}
                     </script>
