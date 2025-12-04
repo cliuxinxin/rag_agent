@@ -266,8 +266,11 @@ def social_summary_node(state: WriterState) -> dict:
         if section.get('content'):
             full_text += f"## {section['title']}\n\n{section['content']}\n\n"
     
+    # 从报告中提取标题
+    title = report[:50] if len(report) > 50 else report  # 简单提取标题
+    
     # 生成社交媒体摘要
-    summary = generate_viral_summary(report, full_text)
+    summary = generate_viral_card_content(title, full_text)
     
     return {"social_summary": summary, "next": "END"}
 

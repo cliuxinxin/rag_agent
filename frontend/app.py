@@ -870,27 +870,7 @@ def render_deep_writing_mode():
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
         
-        # 场景 B: 现有项目 Tab 1 里的"重新生成大纲"按钮
-        with col1:
-            if st.button("🔄 重新生成大纲"):
-                # 准备状态
-                initial_state = {
-                    "project_id": project_id,
-                    "user_requirement": project['requirements'],
-                    "source_type": project['source_type'],
-                    "source_data": project['source_data'],
-                    "planning_steps": [],
-                    "research_notes": [],
-                    "research_report": project['research_report'] or "",
-                    "current_outline": [],
-                    "loop_count": 0,
-                    "next": "Planner"
-                }
-                
-                # 运行流式处理
-                success = run_research_agent_with_stream(initial_state, project_id)
-                if success:
-                    st.rerun()
+        # 场景 B: 移除了"重新生成大纲"按钮，简化界面
         
         with col2:
             edit_instruction = st.text_area("修改指令", placeholder="例如：增加一个关于未来趋势的章节", height=100)
@@ -1051,7 +1031,6 @@ def render_deep_writing_mode():
             # 左侧：调研报告
             with col_rep:
                 st.markdown("### 🕵️‍♂️ 深度调研报告")
-                st.caption("AI 基于调研生成的背景资料，用于指导写作。")
                 new_report = st.text_area("报告内容", value=project.get('research_report', ''), height=600, key="report_editor")
                 if new_report != project.get('research_report', ''):
                     if st.button("💾 保存报告修改"):
@@ -1059,10 +1038,9 @@ def render_deep_writing_mode():
                         st.success("报告已更新")
                         st.rerun()
             
-            # 右侧：大纲编辑器 (核心修改)
+            # 右侧：大纲编辑器 (修复删除逻辑)
             with col_out:
                 st.markdown("### 📝 大纲编辑器")
-                st.caption("您可以手动增删改，也可以指挥 AI 帮您改。")
                 
                 outline = project.get('outline_data', [])
                 
@@ -1070,21 +1048,20 @@ def render_deep_writing_mode():
                 with st.container(border=True):
                     c_ai_1, c_ai_2 = st.columns([3, 1])
                     with c_ai_1:
-                        ai_instruction = st.text_input("🤖 AI 指令", placeholder="例如：把第三章拆分成两章，或者删除关于历史的章节")
+                        ai_instruction = st.text_input("🤖 AI 指令", placeholder="例如：把第三章拆分成两章")
                     with c_ai_2:
                         st.write("") 
                         st.write("")
                         if st.button("🪄 AI 修改", use_container_width=True):
                             if ai_instruction:
-                                # 调用流式修改函数 (需确保 run_refine_stream 已定义)
                                 if run_refine_stream(project_id, outline, ai_instruction):
                                     st.rerun()
 
                 st.divider()
 
-                # --- B. 手动编辑区 (列表渲染) ---
-                # 使用临时列表来处理删除操作
-                indices_to_delete = []
+                # --- B. 手动编辑区 (修复删除逻辑) ---
+                # 使用 delete_index 标记要删除的项
+                delete_index = -1
                 updated_outline = []
                 has_manual_change = False
                 
@@ -1097,35 +1074,41 @@ def render_deep_writing_mode():
                         with c2:
                             st.write("")
                             st.write("")
-                            # 删除按钮
+                            # 核心修复：点击删除后，记录索引
                             if st.button("🗑️", key=f"del_{i}", help="删除此章节"):
-                                indices_to_delete.append(i)
-                                has_manual_change = True
+                                delete_index = i
                         
-                        # 只有没被删除的才加入新列表
-                        if i not in indices_to_delete:
-                            # 检查内容是否变动
-                            if new_title != section['title'] or new_desc != section['desc']:
-                                has_manual_change = True
-                            
-                            updated_outline.append({
-                                "title": new_title, 
-                                "desc": new_desc, 
-                                "content": section.get("content", "") # 保留原有的正文
-                            })
+                        # 检查是否有内容变更
+                        if new_title != section['title'] or new_desc != section['desc']:
+                            has_manual_change = True
+                        
+                        updated_outline.append({
+                            "title": new_title, 
+                            "desc": new_desc, 
+                            "content": section.get("content", "")
+                        })
 
-                # --- C. 底部操作区 ---
+                # --- C. 执行删除操作 ---
+                # 如果用户点击了删除，立即更新数据库并刷新
+                if delete_index != -1:
+                    outline.pop(delete_index) # 从原列表中移除
+                    update_project_outline(project_id, outline, project.get('research_report'))
+                    st.rerun()
+
+                # --- D. 底部操作区 ---
                 c_add, c_save = st.columns(2)
                 
                 with c_add:
                     if st.button("➕ 添加新章节", use_container_width=True):
-                        updated_outline.append({"title": "新章节", "desc": "请输入本章的写作要点...", "content": ""})
-                        has_manual_change = True
+                        # 添加到末尾
+                        outline.append({"title": "新章节", "desc": "请输入本章的写作要点...", "content": ""})
+                        update_project_outline(project_id, outline, project.get('research_report'))
+                        st.rerun()
                 
                 with c_save:
-                    # 如果有删除或添加操作，按钮自动高亮提示保存
-                    if has_manual_change or len(indices_to_delete) > 0:
-                        if st.button("💾 确认保存修改", type="primary", use_container_width=True):
+                    # 仅当有文字修改时才显示保存按钮 (删除和添加已实时处理)
+                    if has_manual_change:
+                        if st.button("💾 确认文字修改", type="primary", use_container_width=True):
                             update_project_outline(project_id, updated_outline, project.get('research_report'))
                             st.success("大纲已更新！")
                             st.rerun()
