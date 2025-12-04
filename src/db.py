@@ -72,6 +72,7 @@ def init_db():
         requirements TEXT,     -- 用户输入的需求/Prompt
         source_type TEXT,      -- "kb", "file", "text"
         source_data TEXT,      -- 知识库名 或 文件内容
+        full_content TEXT,     -- 全文缓存 (Context Caching)
         
         -- 生成内容
         research_report TEXT,  -- 调研报告 (Markdown)
@@ -234,14 +235,14 @@ def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
 
 # === [新增] 写作项目 CRUD 函数 ===
 
-def create_writing_project(title: str, requirements: str, source_type: str, source_data: str) -> str:
+def create_writing_project(title: str, requirements: str, source_type: str, source_data: str, full_content: str = "") -> str:
     project_id = str(uuid.uuid4())
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute('''
-        INSERT INTO writing_projects (id, title, requirements, source_type, source_data, outline_data, full_draft)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (project_id, title, requirements, source_type, source_data, "[]", ""))
+        INSERT INTO writing_projects (id, title, requirements, source_type, source_data, full_content, outline_data, full_draft)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (project_id, title, requirements, source_type, source_data, full_content, "[]", ""))
     conn.commit()
     conn.close()
     return project_id

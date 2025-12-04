@@ -738,6 +738,7 @@ def render_deep_writing_mode():
                 "user_requirement": "", 
                 "source_type": "", 
                 "source_data": "",
+                "full_content": project.get('full_content', ''),  # <--- 添加全文缓存字段
                 "research_report": "",  # 补全
                 "full_draft": "",       # 补全
                 "current_section_index": 0,
@@ -803,16 +804,31 @@ def render_deep_writing_mode():
                 title=title,
                 requirements=req,
                 source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data
+                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
+                full_content=full_content
             )
             st.session_state.current_project_id = pid
             
-            # 2. 准备初始状态
+            # 2. 预加载全文以支持 Context Caching
+            full_content = ""
+            if source_type == "知识库 (KB)" and kb_names:
+                # 从知识库加载文档内容
+                try:
+                    docs, _ = load_kbs(kb_names)
+                    full_content = "\n\n".join([doc.page_content for doc in docs])
+                except Exception as e:
+                    st.warning(f"加载知识库内容时出错: {e}")
+            elif source_type in ["直接粘贴文本", "上传文件"]:
+                # 直接使用 source_data 作为全文
+                full_content = source_data
+            
+            # 3. 准备初始状态
             initial_state = {
                 "project_id": pid,
                 "user_requirement": req,
                 "source_type": "kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
                 "source_data": json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
+                "full_content": full_content,  # <--- 添加全文缓存字段
                 "planning_steps": [],
                 "research_notes": [],
                 "research_report": "",
@@ -821,10 +837,10 @@ def render_deep_writing_mode():
                 "next": "Planner"
             }
             
-            # 3. 运行流式处理
+            # 4. 运行流式处理
             success = run_research_agent_with_stream(initial_state, pid)
             
-            # 4. 刷新页面以显示结果
+            # 5. 刷新页面以显示结果
             if success:
                 time.sleep(1) # 稍作停顿让用户看到完成状态
                 st.rerun()
@@ -900,7 +916,11 @@ def render_deep_writing_mode():
                         "full_draft": current_full_draft, 
                         "current_section_index": i,
                         # 补全字段
-                        "project_id": project_id, "user_requirement": project['requirements'], "source_type": project['source_type'], "source_data": project['source_data']
+                        "project_id": project_id, 
+                        "user_requirement": project['requirements'], 
+                        "source_type": project['source_type'], 
+                        "source_data": project['source_data'],
+                        "full_content": project.get('full_content', '')  # <--- 添加全文缓存字段
                     }
                     
                     # 2. 调用 Drafting Graph

@@ -85,6 +85,9 @@ class WriterState(TypedDict):
     source_type: str           # "kb", "file", "text"
     source_data: Any           # 知识库列表 or 文本内容
     
+    # === [新增] 全文缓存字段 ===
+    full_content: str          # <--- 核心：存储合并后的全文，用于 Context Caching
+    
     # === 调研阶段 (Agent 规划与执行) ===
     planning_steps: List[str]  # Planner 生成的调研计划
     research_notes: List[str]  # 积累的调研片段 (Raw Data)
