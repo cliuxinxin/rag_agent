@@ -187,6 +187,37 @@ def outline_node(state: WriterState) -> dict:
 # PART 2: 迭代写作 Agent
 # ==========================================
 
+def generate_viral_summary(report: str, full_text: str) -> str:
+    """
+    为深度文章生成社交媒体精华卡片内容
+    
+    Args:
+        report: 调研报告
+        full_text: 完整文章文本
+        
+    Returns:
+        生成的社交媒体摘要内容(Markdown格式)
+    """
+    llm = get_llm()
+    
+    prompt = f"""
+    请为这篇深度文章写一个"社交媒体精华卡片"的内容。
+    
+    【文章核心】
+    {report}
+    
+    【要求】
+    1. **标题**: 起一个极具吸引力、甚至带点情绪的标题(例如:"闭源模型的至暗时刻?")。
+    2. **金句**: 提炼文中 1-2 句最震撼的观点。
+    3. **关键数据**: 列出 3 个最硬核的数据指标(Codeforces, AIME 等)。
+    4. **一句话总结**: 为什么普通人需要关注这件事?
+    
+    请输出 Markdown 格式。
+    """
+    
+    content = llm.invoke([HumanMessage(content=prompt)]).content
+    return content
+
 def iterative_writer_node(state: WriterState) -> dict:
     """
     迭代写作者：
@@ -206,9 +237,9 @@ def iterative_writer_node(state: WriterState) -> dict:
     
     llm = get_llm()
     
-    # 构造新的“主编级” Prompt
+    # 构造新的"主编级" Prompt
     prompt = f"""
-    你是一位顶级科技媒体（如《晚点LatePost》、《机器之心》）的资深主编。
+    你是一位顶级科技媒体(如《晚点LatePost》、《机器之心》)的资深主编。
     你的任务是基于调研报告和大纲，撰写文章的第 {idx + 1} 部分。
     
     【核心调研报告】
@@ -222,15 +253,14 @@ def iterative_writer_node(state: WriterState) -> dict:
     {previous_context[-3000:]}
     (请确保与上文逻辑连贯，不要重复上文已讲过的信息)
     
-    【写作核心指令 (必读)】
-    1. **身份设定**：你不是写报告的机器人，你是洞察力极强的行业观察者。语气要客观犀利，拒绝平铺直叙。
-    2. **叙事张力**：
-       - 如果是开头，请通过行业痛点或巨大反差制造悬念。
-       - 如果是技术解析，请使用**通俗类比**（例如：将DSA比作“速读术”，将强化学习比作“题海战术”）。
-    3. **深度洞察**：不要只罗列数据。要分析数据背后的“二阶效应”（例如：技术突破对商业模式的毁灭性打击，对闭源模型的倒逼）。
-    4. **格式规范**：
-       - **禁止**使用“第一章”、“第二章”这种教科书式标题，直接使用具有吸引力的新闻式小标题（Markdown二级标题）。
-       - 适当使用引用块（> 引用）来强调核心金句。
+    【写作风格升级指令】
+    1. **拒绝爹味**: 不要用"本文将阐述..."这种论文腔。要用"我们正在见证..."这种带入感强的语言。
+    2. **用户利益点 (WIIFM)**: 每一章结尾，必须加一段 **"这对我有什么影响?"**，告诉读者(开发者/企业主)现在该怎么做。
+    3. **制造反差**: 在描述技术突破时，对比"以前有多难"和"现在有多强"，突出爽感。
+    4. **通俗化**: 把 DSA、强化学习等技术概念，用"生活中的例子"讲清楚(比如:把稀疏注意力比作'在图书馆只看目录和索引')。
+    5. **格式规范**:
+       - **禁止**使用"第一章"、"第二章"这种教科书式标题，直接使用具有吸引力的新闻式小标题(Markdown二级标题)。
+       - 适当使用引用块(> 引用)来强调核心金句。
        - 对比数据请尽量使用 Markdown 表格。
     
     请直接输出正文内容。
@@ -239,6 +269,24 @@ def iterative_writer_node(state: WriterState) -> dict:
     content = llm.invoke([HumanMessage(content=prompt)]).content
     
     return {"current_section_content": content, "next": "END"}
+
+def social_summary_node(state: WriterState) -> dict:
+    """
+    生成社交媒体摘要卡片
+    """
+    report = state["research_report"]
+    outline = state["current_outline"]
+    
+    # 拼接完整的文章内容
+    full_text = ""
+    for section in outline:
+        if section.get('content'):
+            full_text += f"## {section['title']}\n\n{section['content']}\n\n"
+    
+    # 生成社交媒体摘要
+    summary = generate_viral_summary(report, full_text)
+    
+    return {"social_summary": summary, "next": "END"}
 
 # ==========================================
 # 构建图
@@ -274,8 +322,10 @@ def build_research_graph():
 def build_drafting_graph():
     wf = StateGraph(WriterState)
     wf.add_node("Writer", iterative_writer_node)
+    wf.add_node("SocialSummary", social_summary_node)  # 添加社交媒体摘要节点
     wf.set_entry_point("Writer")
-    wf.add_edge("Writer", END)
+    wf.add_edge("Writer", "SocialSummary")  # 写作完成后生成社交媒体摘要
+    wf.add_edge("SocialSummary", END)
     return wf.compile()
 
 # 新增：大纲修改节点

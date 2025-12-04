@@ -101,6 +101,9 @@ class WriterState(TypedDict):
     current_section_index: int  # 当前正在写的章节索引
     current_section_content: str # 当前章节刚生成的内容
     
+    # === 社交媒体摘要 ===
+    social_summary: str         # 社交媒体精华卡片内容
+    
     # === 控制流 ===
     loop_count: int             # 防止调研死循环
     next: str

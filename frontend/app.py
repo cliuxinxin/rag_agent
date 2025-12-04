@@ -1174,150 +1174,274 @@ def render_deep_writing_mode():
             else:
                 st.warning("⚠️ 内容为空，无法下载。")
         
-        # --- TAB 3: 全文预览与生成长图 ---
+        # --- TAB 3: 杂志级长图生成 ---
         with tab3:
             import streamlit.components.v1 as components
             import markdown
 
-            # 包含调研报告（可选，如果太长可以注释掉）
-            full_markdown_with_report = full_markdown
-            if project.get('research_report'):
-               full_markdown_with_report += "\n\n## 附录：深度调研报告\n\n" + project['research_report'] + "\n\n---\n\n"
+            # 1. 准备数据
+            current_outline = project.get('outline_data', [])
+            raw_title = project.get('title', '未命名文档')
             
-            if not full_markdown.strip() or len(current_outline) == 0:
-                st.warning("⚠️ 暂无内容，请先在\"正文写作\"标签页生成文章。")
-            else:
-                st.subheader("🖼️ 文章长图生成")
-                st.caption("点击下方按钮，将生成一张包含全文的长图片，方便手机分享。")
+            # 2. 构建"精华速读" (如果没有专门生成，就手写一个模板，或者让 AI 生成)
+            # 这里为了演示，我们假设第一段是引言，把它提取出来做导语
+            summary_text = "💡 **核心洞见**：开源大模型 DeepSeek-V3.2 在数学与代码领域首次实现对 GPT-5 的反超，标志着 AI 算力平权时代的到来。"
+            if len(current_outline) > 0 and current_outline[0].get('content'):
+                # 尝试截取引言的前100字作为导语
+                first_chapter_content = current_outline[0]['content']
+                summary_text = "💡 **导读**：" + first_chapter_content[:120] + "..."
 
-                # 3. 将 Markdown 转为 HTML
-                html_body = markdown.markdown(full_markdown_with_report, extensions=['tables', 'fenced_code'])
-                
-                # 4. 构建包含截图脚本的完整 HTML
-                # 这里我们注入了 html2canvas 库，它能让浏览器把网页变成图片
-                custom_html = f"""
+            # 3. 拼接正文
+            full_markdown = ""
+            for sec in current_outline:
+                content = sec.get('content', '')
+                if content:
+                    # 使用 HTML 标签稍微辅助一下排版
+                    full_markdown += f"## {sec['title']}\n\n{content}\n\n"
+
+            if not full_markdown.strip():
+                st.warning("⚠️ 暂无内容，请先生成文章。")
+            else:
+                st.subheader("🎨 杂志级长图预览")
+                st.caption("这种风格更适合发朋友圈或社群，自带专业感。")
+
+                html_body = markdown.markdown(full_markdown, extensions=['tables', 'fenced_code'])
+                summary_html = markdown.markdown(summary_text)
+
+                # 4. 构建杂志风 HTML
+                magazine_html = f"""
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>{raw_title}</title>
-                    <!-- 引入 html2canvas 库 -->
                     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+                    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
                     <style>
+                        /* 全局重置 */
+                        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
                         body {{
-                            background-color: #f0f2f6; /* 背景灰色，突出卡片 */
-                            font-family: "Microsoft YaHei", sans-serif;
+                            background-color: #eef2f5;
+                            font-family: 'Noto Sans SC', sans-serif;
                             padding: 20px;
                             display: flex;
                             flex-direction: column;
                             align-items: center;
                         }}
-                        /* 模拟一张A4纸或长卡片的样式 */
-                        #capture-node {{
-                            background-color: white;
+                        
+                        /* 长图容器 */
+                        #poster-node {{
                             width: 100%;
-                            max-width: 800px; /* 限制宽度，手机看更舒服 */
-                            padding: 40px;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                            max-width: 450px; /* 朋友圈长图的最佳宽度 */
+                            background-color: #fff;
+                            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+                            overflow: hidden;
+                            position: relative;
+                        }}
+
+                        /* 1. 头部海报区 */
+                        .header-banner {{
+                            background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%);
+                            color: white;
+                            padding: 40px 30px;
+                            text-align: center;
+                            position: relative;
+                        }}
+                        .header-title {{
+                            font-family: 'Noto Serif SC', serif;
+                            font-size: 28px;
+                            font-weight: 700;
+                            line-height: 1.4;
+                            margin-bottom: 15px;
+                            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                        }}
+                        .header-tag {{
+                            display: inline-block;
+                            background: rgba(255,255,255,0.2);
+                            padding: 4px 12px;
+                            border-radius: 20px;
+                            font-size: 12px;
+                            letter-spacing: 1px;
+                            text-transform: uppercase;
+                        }}
+
+                        /* 2. 导语卡片 */
+                        .summary-card {{
+                            margin: -20px 20px 20px 20px;
+                            background: #fff;
+                            padding: 20px;
                             border-radius: 8px;
-                            margin-bottom: 20px;
+                            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+                            border-left: 4px solid #4ca1af;
+                            font-size: 14px;
+                            color: #555;
+                            line-height: 1.6;
+                            position: relative;
+                            z-index: 10;
+                        }}
+
+                        /* 3. 正文区域 */
+                        .content-body {{
+                            padding: 10px 30px 40px 30px;
                             color: #333;
                             line-height: 1.8;
+                            font-size: 15px;
                         }}
-                        h1  {{ text-align: center; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 20px; }}
-                        h2  {{ color: #2980b9; margin-top: 30px; border-left: 5px solid #2980b9; padding-left: 10px; background: #f9f9f9; padding: 5px 10px; }}
-                        code  {{ background: #f4f4f4; padding: 2px 5px; border-radius: 4px; color: #d63384; }}
-                        pre  {{ background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }}
-                        table  {{ border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 0.9em; }}
-                        th, td  {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-                        th  {{ background-color: #f2f2f2; }}
-                        blockquote  {{ border-left: 4px solid #ccc; margin: 0; padding-left: 16px; color: #666; }}
                         
-                        /* 按钮样式 */
-                        .btn-container {{
+                        /* 排版细节 */
+                        h2 {{
+                            margin-top: 35px;
+                            margin-bottom: 15px;
+                            font-size: 18px;
+                            font-weight: 700;
+                            color: #2c3e50;
+                            display: flex;
+                            align-items: center;
+                        }}
+                        h2::before {{
+                            content: '';
+                            display: inline-block;
+                            width: 6px;
+                            height: 6px;
+                            background: #4ca1af;
+                            border-radius: 50%;
+                            margin-right: 10px;
+                        }}
+                        p {{ margin-bottom: 15px; text-align: justify; }}
+                        
+                        /* 引用块美化 (金句) */
+                        blockquote {{
+                            background: #f9f9f9;
+                            border: none;
+                            padding: 15px 20px;
+                            margin: 20px 0;
+                            font-family: 'Noto Serif SC', serif;
+                            font-style: italic;
+                            color: #666;
+                            border-radius: 8px;
+                            position: relative;
+                        }}
+                        blockquote::before {{
+                            content: '“';
+                            font-size: 40px;
+                            color: #e0e0e0;
+                            position: absolute;
+                            top: -10px;
+                            left: 10px;
+                        }}
+
+                        /* 代码块 */
+                        pre {{
+                            background: #2d2d2d;
+                            color: #f8f8f2;
+                            padding: 15px;
+                            border-radius: 6px;
+                            overflow-x: auto;
+                            font-size: 12px;
+                            margin: 15px 0;
+                        }}
+
+                        /* 4. 底部署名 */
+                        .footer {{
+                            background-color: #f8f9fa;
+                            padding: 20px;
+                            text-align: center;
+                            border-top: 1px dashed #e0e0e0;
+                            color: #999;
+                            font-size: 12px;
+                        }}
+                        .footer strong {{ color: #4ca1af; }}
+
+                        /* 下载按钮容器 */
+                        .btn-wrapper {{
                             position: fixed;
-                            bottom: 20px;
-                            right: 20px;
+                            bottom: 30px;
+                            right: 30px;
                             z-index: 999;
                         }}
-                        .download-btn {{
-                            background-color: #ff4b4b;
+                        .dl-btn {{
+                            background: #2c3e50;
                             color: white;
                             border: none;
-                            padding: 15px 30px;
-                            border-radius: 30px;
-                            font-size: 16px;
+                            padding: 12px 25px;
+                            border-radius: 50px;
                             font-weight: bold;
+                            box-shadow: 0 5px 15px rgba(44, 62, 80, 0.4);
                             cursor: pointer;
-                            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-                            transition: all 0.3s;
+                            transition: transform 0.2s;
                         }}
-                        .download-btn:hover  {{ background-color: #ff2b2b; transform: translateY(-2px); }}
-                        .download-btn:active  {{ transform: translateY(0); }}
-                        
-                        /* 加上水印 */
-                        .watermark {{
-                            text-align: center;
-                            margin-top: 40px;
-                            color: #ccc;
-                            font-size: 12px;
-                            border-top: 1px dashed #eee;
-                            padding-top: 10px;
-                        }}
+                        .dl-btn:hover {{ transform: scale(1.05); }}
+
                     </style>
                 </head>
                 <body>
-                    <!-- 悬浮下载按钮 -->
-                    <div class="btn-container">
-                        <button class="download-btn" onclick="generateImage()" id="dl-btn">📸 保存为长图</button>
+                    <div class="btn-wrapper">
+                        <button class="dl-btn" onclick="genImage()" id="btn-save">📸 保存分享长图</button>
                     </div>
 
-                    <!-- 要截图的内容区域 -->
-                    <div id="capture-node">
-                        {html_body}
-                        <div class="watermark">Generated by DeepSeek Writing Assistant</div>
+                    <!-- 长图主体 -->
+                    <div id="poster-node">
+                        <!-- 头部 -->
+                        <div class="header-banner">
+                            <div class="header-tag">DEEPSEEK REPORT</div>
+                            <div class="header-title">{raw_title}</div>
+                        </div>
+
+                        <!-- 导语 -->
+                        <div class="summary-card">
+                            {summary_html}
+                        </div>
+
+                        <!-- 正文 -->
+                        <div class="content-body">
+                            {html_body}
+                        </div>
+
+                        <!-- 底部 -->
+                        <div class="footer">
+                            Generated by <strong>DeepSeek Writing Agent</strong><br>
+                            让知识更有价值
+                        </div>
                     </div>
 
                     <script>
-                        function generateImage() {{
-                            var btn = document.getElementById('dl-btn');
-                            var originalText = btn.innerText;
-                            btn.innerText = "⏳ 生成中...";
-                            btn.style.backgroundColor = "#ccc";
+                        function genImage() {{
+                            var btn = document.getElementById('btn-save');
+                            btn.innerText = "⏳ 渲染中...";
                             
-                            var node = document.getElementById('capture-node');
+                            var node = document.getElementById('poster-node');
                             
                             html2canvas(node, {{
-                                scale: 2, // 提高清晰度 (2倍图)
-                                useCORS: true, // 允许跨域图片
-                                backgroundColor: "#ffffff"
-                            }}).then(function(canvas) {{
-                                // 创建下载链接
+                                scale: 2, // 高清
+                                useCORS: true,
+                                scrollY: -window.scrollY // 修复滚动偏移
+                            }}).then(canvas => {{
                                 var link = document.createElement('a');
-                                link.download = '{raw_title}_长图.png';
+                                link.download = '{raw_title}_杂志风长图.png';
                                 link.href = canvas.toDataURL("image/png");
                                 link.click();
                                 
-                                // 恢复按钮
-                                btn.innerText = "✅ 下载成功！";
+                                // 恢复按钮状态
                                 setTimeout(() => {{
-                                    btn.innerText = originalText;
-                                    btn.style.backgroundColor = "#ff4b4b";
-                                }}, 2000);
-                            }}).catch(function(err) {{
+                                    btn.innerText = "✅ 已保存";
+                                    setTimeout(() => {{
+                                        btn.innerText = "📸 保存分享长图";
+                                    }}, 2000);
+                                }}, 1000);
+                            }}).catch(err => {{
                                 console.error(err);
-                                btn.innerText = "❌ 生成失败";
-                                alert("生成图片失败，请尝试刷新页面。");
+                                btn.innerText = "❌ 保存失败";
+                                setTimeout(() => {{
+                                    btn.innerText = "📸 保存分享长图";
+                                }}, 2000);
                             }});
                         }}
                     </script>
                 </body>
                 </html>
                 """
-                
-                # 5. 渲染 HTML 组件
-                # height 设置得高一点，让用户能预览
-                components.html(custom_html, height=800, scrolling=True)
+
+                # 渲染组件
+                components.html(magazine_html, height=800, scrolling=True)
 
 # === 知识库管理界面 (保持不变) ===
 def render_kb_management():
