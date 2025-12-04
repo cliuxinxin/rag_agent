@@ -162,35 +162,71 @@ def outline_node(state: WriterState) -> dict:
 # ==========================================
 
 def iterative_writer_node(state: WriterState) -> dict:
-    full_text = state["full_content"] # <--- 再次复用缓存
+    full_text = state["full_content"] # 核心：原文缓存
     report = state["research_report"]
     outline = state["current_outline"]
     idx = state["current_section_index"]
-    previous_context = state.get("full_draft", "")
+    previous_context = state.get("full_draft", "") # 已生成的正文
     
     if idx < 0 or idx >= len(outline):
         return {"current_section_content": "", "next": "END"}
     
     target_section = outline[idx]
     llm = get_llm()
+    
+    # 构造 System Prompt (复用 Context Caching)
     system_msg = SystemMessage(content=get_cached_system_prompt(full_text))
     
+    # === 修改点：增强 Prompt 约束 ===
     prompt = f"""
-    正在撰写第 {idx + 1} 部分：【{target_section['title']}】。
+    你是一位追求完美的科技专栏主编。
+    正在撰写文章的第 {idx + 1} 部分，章节标题为：【{target_section['title']}】。
     
-    【调研报告】{report}
-    【本章指引】{target_section['desc']}
-    【已写内容】{previous_context[-3000:]}
+    【核心素材 (Fact Base)】
+    {report}
     
-    【要求】
-    1. 充分利用【全文内容】中的细节。
-    2. 紧密承接上文。
-    3. 不重复已写内容。
-    4. 直接输出 Markdown 正文。
+    【本章写作指引】
+    {target_section['desc']}
+    
+    【上文脉络 (Context)】
+    {previous_context[-4000:]} 
+    
+    【🔴 严格的格式与内容清洗规则 (必须遵守)】
+    1. **禁止重复标题**：输出的正文开头**不要**再写一遍“{target_section['title']}”或“引言”等标题，直接写正文段落。
+    2. **删除无效指代**：
+       - 严禁出现“如图1所示”、“见表2”、“As shown in Figure 2”等文字，因为读者看不到原图。
+       - 请将图表内容转化为文字描述（例如：“数据显示...”）。
+    3. **数字与逻辑自检**：
+       - 严禁“复读机”现象（如“从0.65降至0.65”）。
+       - 涉及数字对比时，必须检查逻辑通顺，并带上单位（如“美元/百万令牌”）。
+    4. **符号规范**：
+       - 数学公式请使用 LaTeX 格式并用 $ 包裹（如 $O(L^2)$），或者使用通俗中文描述（如“二次方复杂度”）。
+       - 不要输出裸露的 LaTeX 命令（如 (H_I)）。
+    5. **统一编号**：
+       - 如果需要列点，请使用标准的 Markdown 列表（- 或 1.）。
+       - 不要使用“七、”这种中文大写数字，除非大纲里明确要求。
+    
+    【写作要求】
+    - 语气：专业、客观、有深度，类似“机器之心”或“新智元”的深度分析风格。
+    - 结构：多用短句，适当分段，关键概念可以用 **加粗**。
+    - 承接：开头必须自然承接【上文脉络】，不要生硬跳转。
+    
+    请输出本章的 Markdown 正文。
     """
     
     content = llm.invoke([system_msg, HumanMessage(content=prompt)]).content
-    return {"current_section_content": content, "next": "END"}
+    
+    # === 新增：简单的后处理清洗 ===
+    # 防止 AI 还是不听话，输出了标题，这里做一个简单的字符串剔除
+    clean_content = content.strip()
+    # 如果开头就是标题，去掉它
+    if clean_content.startswith(target_section['title']):
+        clean_content = clean_content[len(target_section['title']):].strip()
+    # 去掉可能存在的 Markdown 标题标记 (e.g. ## Title)
+    import re
+    clean_content = re.sub(r'^#+\s*' + re.escape(target_section['title']) + r'\s*\n', '', clean_content, flags=re.IGNORECASE).strip()
+
+    return {"current_section_content": clean_content, "next": "END"}
 
 # ==========================================
 # PART 3: 大纲重构 (复用缓存)
