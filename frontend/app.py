@@ -637,24 +637,6 @@ def render_deep_qa_mode():
 def render_deep_writing_mode():
     st.title("✍️ 深度写作助手")
     
-    # === 辅助：预加载全文 (修复 UnboundLocalError 的关键) ===
-    def get_project_full_content(source_type, source_data):
-        """统一处理全文加载，防止变量未定义"""
-        content = ""
-        try:
-            if source_type == "知识库 (KB)":
-                # source_data 是 JSON 字符串列表
-                kb_names = json.loads(source_data)
-                docs, _ = load_kbs(kb_names)
-                content = "\n\n".join([d.page_content for d in docs])
-            elif source_type in ["直接粘贴文本", "text"]:
-                content = source_data
-            # 注意：这里可能还需要处理上传文件的情况
-            return content
-        except Exception as e:
-            st.warning(f"加载全文时出错: {e}")
-            return ""
-    
     # === 侧边栏：项目列表 ===
     with st.sidebar:
         st.subheader("📂 写作项目")
@@ -677,208 +659,168 @@ def render_deep_writing_mode():
                         st.session_state.current_project_id = None
                     st.rerun()
 
-    # === 新增：处理流式输出的函数 ===
-    def run_research_agent_with_stream(initial_state, project_id):
-        """
-        运行调研 Agent 并展示可视化过程
-        """
-        # 创建一个状态容器
-        status_container = st.status("🚀 AI 正在启动深度调研工作流...", expanded=True)
-        
-        final_report = ""
-        final_outline = []
-        
+    # === 辅助：预加载全文 (修复 UnboundLocalError 的关键) ===
+    def get_project_full_content(source_type, source_data):
+        """统一处理全文加载，防止变量未定义"""
+        content = ""
         try:
-            # 使用 stream 模式，recursion_limit 防止死循环
-            for step in research_graph.stream(initial_state, config={"recursion_limit": 50}):
-                
-                # 遍历每一个正在运行的节点
-                for node_name, update in step.items():
-                    
-                    # --- 1. 规划阶段 ---
-                    if node_name == "Planner":
-                        plans = update.get("planning_steps", [])
-                        if plans:
-                            latest_plan = plans[-1]
-                            status_container.write(f"🤔 **Planner (规划师)**: 制定了新的调研方向\n> {latest_plan}")
-                    
-                    # --- 2. 搜索阶段 ---
-                    elif node_name == "Researcher":
-                        notes = update.get("research_notes", [])
-                        if notes:
-                            # 只显示最新的一条笔记片段
-                            latest_note = notes[-1][:100] + "..."
-                            status_container.write(f"🔎 **Researcher (研究员)**: 查到了资料\n> {latest_note}")
-                    
-                    # --- 3. 循环检查 ---
-                    elif node_name == "PlanCheck":
-                        loop = update.get("loop_count", 0)
-                        status_container.write(f"🔄 **System**: 当前调研轮次 {loop}/3")
-
-                    # --- 4. 报告生成 ---
-                    elif node_name == "ReportGenerator":
-                        final_report = update.get("research_report", "")
-                        status_container.write("📝 **Writer**: 正在汇总《深度调研报告》...")
-
-                    # --- 5. 大纲生成 ---
-                    elif node_name == "Outliner":
-                        final_outline = update.get("current_outline", [])
-                        status_container.write("📋 **Outliner**: 正在构建文章结构...")
-
-            # 运行结束
-            status_container.update(label="✅ 大纲生成完成！", state="complete", expanded=False)
-            
-            # === 关键修复：立即保存到数据库 ===
-            if final_outline:
-                update_project_outline(project_id, final_outline, final_report)
-                return True # 标记成功
-            else:
-                status_container.update(label="❌ 生成失败：大纲为空", state="error")
-                return False
-
+            if source_type == "知识库 (KB)":
+                # source_data 是 JSON 字符串列表
+                kb_names = json.loads(source_data)
+                docs, _ = load_kbs(kb_names)
+                content = "\n\n".join([d.page_content for d in docs])
+            elif source_type in ["直接粘贴文本", "text"]:
+                content = source_data
+            elif source_type in ["上传文件", "file"]:
+                content = source_data
         except Exception as e:
-            status_container.update(label="❌ 发生错误", state="error")
-            st.error(f"Error details: {e}")
+            print(f"Error loading content: {e}")
+        return content
+
+    # === 流式函数 (Updated to verify full_content) ===
+    def run_research_agent_with_stream(initial_state, project_id):
+        # 确保 initial_state 里有 full_content
+        if "full_content" not in initial_state or not initial_state["full_content"]:
+            st.error("错误：无法加载文档全文，无法启动 Context Caching。")
             return False
             
-    # === 新增：大纲修改的流式函数 ===
+        status_container = st.status("🚀 AI 正在启动深度调研工作流 (Context Caching On)...", expanded=True)
+        final_report = ""
+        final_outline = []
+        try:
+            for step in research_graph.stream(initial_state, config={"recursion_limit": 50}):
+                for node_name, update in step.items():
+                    if node_name == "Planner":
+                         status_container.write(f"🤔 **Planner**: {update.get('planning_steps',[''])[0]}")
+                    elif node_name == "Researcher":
+                         status_container.write(f"🔎 **Researcher**: 查阅全文并摘录笔记...")
+                    elif node_name == "ReportGenerator":
+                         final_report = update.get("research_report", "")
+                         status_container.write("📝 **Writer**: 撰写调研报告...")
+                    elif node_name == "Outliner":
+                         final_outline = update.get("current_outline", [])
+            
+            if final_outline:
+                update_project_outline(project_id, final_outline, final_report)
+                status_container.update(label="✅ 大纲生成完成！", state="complete", expanded=False)
+                return True
+            else:
+                status_container.update(label="❌ 生成失败", state="error")
+                return False
+        except Exception as e:
+            st.error(f"Graph Error: {e}")
+            return False
+
     def run_refine_stream(project_id, current_outline, instruction):
-        """流式运行大纲修改"""
-        status_box = st.status("🖊️ AI 主编正在修改大纲...", expanded=True)
-        new_outline = current_outline
-        
-        # 获取项目信息
+        # 获取项目以加载全文
         project = get_writing_project(project_id)
+        full_content_cache = get_project_full_content(project['source_type'], project['source_data'])
         
+        status_box = st.status("🖊️ AI 主编正在基于全文重构大纲...", expanded=True)
+        new_outline = current_outline
         try:
             initial_state = {
                 "current_outline": current_outline,
-                "edit_instruction": instruction, # <--- 关键：必须传入这个参数
-                # 补全其他字段防止校验报错
-                "project_id": project_id, 
-                "user_requirement": "", 
-                "source_type": "", 
-                "source_data": "",
-                "full_content": project.get('full_content', ''),  # <--- 添加全文缓存字段
-                "research_report": "",  # 补全
-                "full_draft": "",       # 补全
+                "edit_instruction": instruction,
+                "project_id": project_id,
+                "user_requirement": project['requirements'],
+                "source_type": project['source_type'],
+                "source_data": project['source_data'],
+                "full_content": full_content_cache, # <--- 注入
+                "research_report": project['research_report'],
+                "full_draft": project.get('full_draft', ''),
                 "current_section_index": 0,
                 "loop_count": 0,
                 "planning_steps": [],
                 "research_notes": []
             }
+            # 这里简化化，直接用 invoke 拿结果
+            final_state = refine_graph.invoke(initial_state)
+            new_outline = final_state["current_outline"]
+            new_report = final_state["research_report"]
             
-            # 运行图
-            for step in refine_graph.stream(initial_state):
-                for node, update in step.items():
-                    if node == "Refiner":
-                        new_outline = update.get("current_outline", current_outline)
-                        status_box.write("✅ 结构调整完成，正在校验格式...")
-            
-            status_box.update(label="大纲修改完成！", state="complete", expanded=False)
-            update_project_outline(project_id, new_outline, "")
+            update_project_outline(project_id, new_outline, new_report)
+            status_box.update(label="修改完成", state="complete")
             return True
-            
         except Exception as e:
-            status_box.update(label="修改失败", state="error")
-            st.error(f"Error details: {e}") # 打印详细错误方便调试
+            st.error(f"Refine Error: {e}")
             return False
 
-    # === 主区域逻辑 ===
+    # === 主界面逻辑 ===
     
     # 场景 1: 新建项目
     if not st.session_state.get("current_project_id"):
         st.subheader("🚀 开始新的写作")
-        
         col1, col2 = st.columns(2)
-        with col1:
-            title = st.text_input("项目标题", placeholder="例如：2025年AI行业发展报告")
+        with col1: title = st.text_input("项目标题")
+        req = st.text_area("需求/Prompt")
+        source_type = st.radio("来源", ["知识库 (KB)", "直接粘贴文本", "上传文件"], horizontal=True)
         
-        req = st.text_area("写作需求/Prompt", height=150, placeholder="例如：写一篇关于 DeepSeek 技术的深度分析文章，受众是技术人员，风格专业严谨。")
-        
-        source_type = st.radio("参考资料来源", ["知识库 (KB)", "直接粘贴文本", "上传文件"], horizontal=True)
-        
+        # 变量初始化
         kb_names = []
-        source_data = ""
+        source_data = "" 
         
         if source_type == "知识库 (KB)":
             all_kbs = list_kbs()
-            if not all_kbs:
-                st.warning("暂无可用知识库，请先创建。")
-            else:
-                kb_names = st.multiselect("选择知识库", all_kbs)
-                
+            kb_names = st.multiselect("选择知识库", all_kbs)
         elif source_type == "直接粘贴文本":
-            source_data = st.text_area("粘贴文本内容", height=200)
-            
+            source_data = st.text_area("粘贴文本")
         elif source_type == "上传文件":
-            uploaded_file = st.file_uploader("上传 PDF 或 TXT 文档", type=["pdf", "txt"])
+            uploaded_file = st.file_uploader("上传文件")
             if uploaded_file:
                 source_data = load_file_content(uploaded_file)
+
+        start_btn = st.button("✨ 生成大纲", type="primary")
         
-        start_disabled = not (title and req and (kb_names or source_data))
-        
-        # 场景 A: 新建项目时的"生成大纲"按钮
-        if st.button("✨ 生成大纲", type="primary", disabled=start_disabled):
-            # 1. 预加载全文以支持 Context Caching
-            full_content = ""
-            if source_type == "知识库 (KB)" and kb_names:
-                # 从知识库加载文档内容
-                try:
-                    docs, _ = load_kbs(kb_names)
-                    full_content = "\n\n".join([doc.page_content for doc in docs])
-                except Exception as e:
-                    st.warning(f"加载知识库内容时出错: {e}")
-            elif source_type in ["直接粘贴文本", "上传文件"]:
-                # 直接使用 source_data 作为全文
-                full_content = source_data
-            
-            # 2. 创建项目
-            pid = create_writing_project(
-                title=title,
-                requirements=req,
-                source_type="kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                source_data=json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
-                full_content=full_content
-            )
-            st.session_state.current_project_id = pid
-            
-            # 3. 准备初始状态
-            initial_state = {
-                "project_id": pid,
-                "user_requirement": req,
-                "source_type": "kb" if source_type == "知识库 (KB)" else "text" if source_type == "直接粘贴文本" else "file",
-                "source_data": json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data,
-                "full_content": full_content,  # <--- 添加全文缓存字段
-                "planning_steps": [],
-                "research_notes": [],
-                "research_report": "",
-                "current_outline": [],
-                "loop_count": 0,
-                "next": "Planner"
-            }
-            
-            # 4. 运行流式处理
-            success = run_research_agent_with_stream(initial_state, pid)
-            
-            # 5. 刷新页面以显示结果
-            if success:
-                time.sleep(1) # 稍作停顿让用户看到完成状态
-                st.rerun()
-    
+        if start_btn:
+            if not title or not req:
+                st.error("请填写标题和需求")
+            else:
+                # 1. 准备 source_data (存库用)
+                # KB 模式下存 JSON 列表字符串，其他模式存文本
+                db_source_data = json.dumps(kb_names) if source_type == "知识库 (KB)" else source_data
+                
+                # 2. 预加载全文 (Flow 用)
+                full_content_cache = get_project_full_content(source_type, db_source_data)
+                
+                if not full_content_cache:
+                    st.error("内容为空，无法生成")
+                else:
+                    # === 修复：这里不能传 full_content ===
+                    pid = create_writing_project(title, req, source_type, db_source_data)
+                    st.session_state.current_project_id = pid
+                    
+                    initial_state = {
+                        "project_id": pid,
+                        "user_requirement": req,
+                        "source_type": source_type,
+                        "source_data": db_source_data,
+                        "full_content": full_content_cache, # <--- 传入 Initial State 即可
+                        "planning_steps": [],
+                        "research_notes": [],
+                        "research_report": "",
+                        "current_outline": [],
+                        "loop_count": 0,
+                        "next": "Planner"
+                    }
+                    if run_research_agent_with_stream(initial_state, pid):
+                        st.rerun()
+
     # 场景 2: 编辑现有项目
     else:
         project_id = st.session_state.current_project_id
         project = get_writing_project(project_id)
-        
         if not project:
-            st.error("项目不存在")
+            st.error("项目加载失败")
             st.session_state.current_project_id = None
             st.rerun()
             return
-            
+
         st.subheader(f"📝 {project['title']}")
         
+        # 预加载全文 (每次进入编辑页都准备好，供后续操作使用)
+        full_content_cache = get_project_full_content(project['source_type'], project['source_data'])
+
         # 显示调研报告
         if project['research_report']:
             with st.expander("🔍 调研报告", expanded=False):
@@ -906,104 +848,14 @@ def render_deep_writing_mode():
         # 大纲操作
         st.markdown("---")
         
-        # === 核心修改：迭代生成可视化 ===
-        # 计算当前已有的全文草稿 (Context)
-        current_full_draft = ""
-        for sec in outline_data:
-            if sec.get('content'):
-                current_full_draft += f"## {sec['title']}\n\n{sec['content']}\n\n"
-        
-        # 重新排版生成完整文章按钮，使其在界面上保持整洁
-        start_gen = st.button("🚀 生成完整文章", type="primary", use_container_width=True)
-        
-        # 用于实时展示正在生成的内容的容器
-        live_status_container = st.container()
-        
-        if start_gen:
-            # 遍历大纲
-            for i, section in enumerate(outline_data):
-                # 如果这一章已经有内容，跳过（或者你可以加个 checkbox 决定是否覆盖）
-                if section.get('content') and len(section['content']) > 10:
-                    continue
-                    
-                # 创建一个独立的 Status 框，显示当前章节进度
-                with live_status_container.status(f"✍️ 正在撰写第 {i+1} 章：{section['title']}...", expanded=True) as status:
-                    
-                    # 1. 准备 State
-                    # 注意：每次循环，current_full_draft 都是最新的，包含了上一轮生成的内容
-                    state = {
-                        "research_report": project['research_report'] or "",
-                        "current_outline": outline_data,
-                        "full_draft": current_full_draft, 
-                        "current_section_index": i,
-                        # 补全字段
-                        "project_id": project_id, 
-                        "user_requirement": project['requirements'], 
-                        "source_type": project['source_type'], 
-                        "source_data": project['source_data'],
-                        "full_content": project.get('full_content', '')  # <--- 添加全文缓存字段
-                    }
-                    
-                    # 2. 调用 Drafting Graph
-                    # 这里我们不需要 stream step，因为 drafting_graph 只有一个节点
-                    # 但为了 UI 效果，我们可以假装打印点日志，或者如果未来拆分了步骤这里能看到
-                    status.write("🧠 回顾上文与调研报告...")
-                    
-                    try:
-                        res = drafting_graph.invoke(state)
-                        new_content = res["current_section_content"]
-                        
-                        status.write("📝 正在落笔...")
-                        status.markdown(f"> {new_content[:100]}...") # 预览一点点
-                        
-                        # 3. 更新内存数据
-                        outline_data[i]['content'] = new_content
-                        
-                        # 4. 更新 Context (关键：让下一章知道这一章写了啥)
-                        current_full_draft += f"## {section['title']}\n\n{new_content}\n\n"
-                        
-                        # 5. 立即存库 (防止中途断掉白写了)
-                        update_project_outline(project_id, outline_data, project['research_report'] or "")
-                        
-                        status.update(label=f"✅ 第 {i+1} 章完成", state="complete", expanded=False)
-                        
-                    except Exception as e:
-                        status.update(label=f"❌ 第 {i+1} 章生成失败", state="error")
-                        st.error(str(e))
-                        break # 出错停止
-            
-            st.success("🎉 全文写作完成！")
-            time.sleep(1)
-            st.rerun()
-
-        # 显示完整草稿（如果有）
-        # if project['full_draft']:
-        #     st.markdown("---")
-        #     st.markdown("### 📄 完整草稿")
-        #     st.markdown(project['full_draft'])
-        
-        st.markdown("---")
-        
         # 1. 获取数据
         current_outline = project.get('outline_data', [])
         raw_title = project.get('title', '未命名文档')
                     
-        # === 修复核心 1: 清洗文件名 ===
-        # 去掉 Emoji、空格和特殊符号，只保留中文、英文、数字、下划线
-        # 这一步非常关键，否则浏览器下载会卡在 100%
-        import re
+        # === 清洗文件名 ===
         clean_title = re.sub(r'[^\w\u4e00-\u9fa5\-_]', '_', raw_title)
-        # 防止文件名太长
         if len(clean_title) > 50: clean_title = clean_title[:50]
         pid = project_id
-        
-        # === 修复核心 1: 清洗文件名 ===
-        # 去掉 Emoji、空格和特殊符号，只保留中文、英文、数字、下划线
-        # 这一步非常关键，否则浏览器下载会卡在 100%
-        import re
-        clean_title = re.sub(r'[^\w\u4e00-\u9fa5\-_]', '_', raw_title)
-        # 防止文件名太长
-        if len(clean_title) > 50: clean_title = clean_title[:50]
         
         # 2. 拼接内容
         full_markdown = f"# {raw_title}\n\n"
@@ -1017,7 +869,6 @@ def render_deep_writing_mode():
         
         # --- TAB 1: 大纲与结构策划 ---
         with tab1:
-            # 移除左右分栏，直接全宽显示
             st.markdown("### 📝 全局结构策划")
             st.caption("这里是文章的骨架。您可以手动调整，或让 AI 基于新思路重构全文。")
             
@@ -1034,7 +885,6 @@ def render_deep_writing_mode():
                 with c_ai_2:
                     if st.button("✨ 执行重构", use_container_width=True, type="primary"):
                         if ai_instruction:
-                            # 调用流式修改 (Refine Graph 现在会更新 report 和 outline)
                             if run_refine_stream(project_id, outline, ai_instruction):
                                 st.rerun()
 
@@ -1046,12 +896,11 @@ def render_deep_writing_mode():
             has_manual_change = False
             
             for i, section in enumerate(outline):
-                # 使用 Expander 包裹，让界面更紧凑
                 with st.expander(f"📌 第 {i+1} 章：{section['title']}", expanded=False):
                     c1, c2 = st.columns([6, 1])
                     with c1:
                         new_title = st.text_input("章节标题", value=section['title'], key=f"t_{i}")
-                        new_desc = st.text_area("写作指引 (Prompt)", value=section['desc'], height=100, key=f"d_{i}", help="指导 AI 这一章该写什么")
+                        new_desc = st.text_area("写作指引 (Prompt)", value=section['desc'], height=100, key=f"d_{i}")
                     with c2:
                         st.write("")
                         st.write("")
@@ -1067,16 +916,12 @@ def render_deep_writing_mode():
                         "content": section.get("content", "")
                     })
 
-            # --- 执行删除 ---
             if delete_index != -1:
                 outline.pop(delete_index)
-                # 即使是手动删除，也建议同步保存报告（虽然报告内容没变，但要保持接口一致）
                 update_project_outline(project_id, outline, project.get('research_report'))
                 st.rerun()
 
             st.write("")
-            
-            # --- C. 底部操作栏 ---
             col_add, col_save = st.columns([1, 1])
             with col_add:
                 if st.button("➕在该位置追加新章节", use_container_width=True):
@@ -1100,10 +945,49 @@ def render_deep_writing_mode():
                 else:
                     st.markdown(full_markdown)
 
+            # 底部操作区
             st.markdown("---")
-            st.subheader("📥 导出文档")
-            
-            st.info("📥 导出功能已移除，请直接复制所需内容。")        
+            _, col_gen = st.columns([2, 1])
+            with col_gen:
+                 if st.button("🚀 生成完整文章", type="primary", use_container_width=True):
+                     outline_data = project['outline_data']
+                     current_full_draft = ""
+                     for sec in outline_data:
+                         if sec.get('content'):
+                             current_full_draft += f"## {sec['title']}\n\n{sec['content']}\n\n"
+                     
+                     ls_container = st.container()
+                     
+                     for i, section in enumerate(outline_data):
+                         if section.get('content') and len(section['content']) > 10:
+                             continue
+                         
+                         with ls_container.status(f"✍️ 正在撰写: {section['title']}...", expanded=True) as status:
+                             state = {
+                                "project_id": project_id,
+                                "user_requirement": project['requirements'],
+                                "source_type": project['source_type'],
+                                "source_data": project['source_data'],
+                                "full_content": full_content_cache, # <--- 核心
+                                "research_report": project['research_report'] or "",
+                                "current_outline": outline_data,
+                                "full_draft": current_full_draft, 
+                                "current_section_index": i
+                             }
+                             try:
+                                 res = drafting_graph.invoke(state)
+                                 new_content = res["current_section_content"]
+                                 outline_data[i]['content'] = new_content
+                                 current_full_draft += f"## {section['title']}\n\n{new_content}\n\n"
+                                 update_project_outline(project_id, outline_data, project['research_report'])
+                                 status.update(label="完成", state="complete")
+                             except Exception as e:
+                                 status.write(f"Error: {e}")
+                                 status.update(label="失败", state="error")
+                                 break
+                     st.success("全文生成完毕")
+                     st.rerun()
+        
         # --- TAB 3: 分享与发布 ---
         with tab3:
             import streamlit.components.v1 as components
