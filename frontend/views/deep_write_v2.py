@@ -13,6 +13,36 @@ from src.db import (
     get_writing_project,
 )
 
+def load_file_content(uploaded_file) -> str:
+    """
+    统一的文件读取逻辑 (与 Deep Read 模块保持一致)
+    支持 PDF 和 TXT 的文本提取
+    """
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    full_text = ""
+    
+    # 创建临时文件以供 PyPDFLoader 读取
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+        
+    try:
+        if file_ext == "pdf":
+            loader = PyPDFLoader(tmp_path)
+            pages = loader.load()
+            full_text = "\n\n".join([p.page_content for p in pages])
+        else:
+            # 默认为文本文件
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                full_text = f.read()
+    except Exception as e:
+        st.error(f"文件读取失败: {e}")
+    finally:
+        # 清理临时文件
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+            
+    return full_text
 
 def render():
     # 侧边栏历史项目
