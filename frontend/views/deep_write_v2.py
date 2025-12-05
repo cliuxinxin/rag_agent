@@ -194,7 +194,7 @@ def run_drafting_loop():
     total_sections = len(state["outline"])
 
     try:
-        for step in drafting_graph.stream(state):
+        for step in drafting_graph.stream(state, config={"recursion_limit": 50}):
             for node_name, update in step.items():
                 state.update(update)
 
