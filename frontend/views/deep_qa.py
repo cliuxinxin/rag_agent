@@ -1,8 +1,7 @@
 # frontend/views/deep_qa.py
 import streamlit as st
 from src.graphs.deep_qa_graph import deep_qa_graph as qa_graph
-from src.storage import load_kbs
-from src.db import list_kbs
+from src.storage import load_kbs, list_kbs
 from langchain_core.messages import HumanMessage
 
 def render():
