@@ -1,6 +1,9 @@
 import json
+import os
+import tempfile
 import streamlit as st
 import streamlit.components.v1 as comp
+from langchain_community.document_loaders import PyPDFLoader
 from src.graphs.write_graph_v2 import planning_graph, drafting_graph
 from src.db import (
     create_writing_project,
@@ -66,7 +69,8 @@ def render_step_setup():
     if st.button("🚀 启动策划会", type="primary"):
         full_content = ""
         if uploaded_file:
-            full_content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+            with st.spinner("正在提取文档内容..."):
+                full_content = load_file_content(uploaded_file)
         elif text_input:
             full_content = text_input
 
@@ -74,10 +78,14 @@ def render_step_setup():
             st.error("请提供内容和需求")
             return
 
-        # 长度保护
-        MAX_CHARS = 50000
+        if not full_content.strip():
+            st.error("文档内容提取为空，请检查文件是否包含可复制的文本。")
+            return
+
+        # 长度保护（10 万字符）
+        MAX_CHARS = 100000
         if len(full_content) > MAX_CHARS:
-            st.warning(f"⚠️ 文档过长 ({len(full_content)} 字)，已截取前 {MAX_CHARS} 字。完整分析建议使用「深度解读」。")
+            st.warning(f"⚠️ 文档过长 ({len(full_content)} 字)，已截取前 {MAX_CHARS} 字。")
             full_content = full_content[:MAX_CHARS] + "\n...(内容已截断)..."
 
         with st.spinner("首席策划正在分析文档..."):
@@ -100,7 +108,7 @@ def render_step_setup():
                 st.session_state.newsroom_state = initial_state
                 st.rerun()
             except Exception as e:
-                st.error(f"分析失败，可能是内容过长或网络波动：{e}")
+                st.error(f"分析失败，可能是内容过长或网络波动。错误信息: {e}")
 
 
 def render_step_angle_selection():
@@ -242,7 +250,12 @@ def render_history_sidebar():
 
     st.markdown("---")
     for p in projects:
-        if st.button(f"📄 {p['title']}", key=f"hist_{p['id']}", use_container_width=True, help=f"更新时间: {p['updated_at']}"):
+        if st.button(
+            f"📄 {p['title']}",
+            key=f"hist_{p['id']}",
+            use_container_width=True,
+            help=f"更新时间: {p['updated_at']}",
+        ):
             data = get_writing_project(p["id"])
             if data:
                 st.session_state.newsroom_state = {
