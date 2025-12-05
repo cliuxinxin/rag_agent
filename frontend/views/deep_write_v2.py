@@ -1,9 +1,6 @@
-import streamlit as st
-import time
 import json
-import textwrap
-from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+import streamlit as st
+import streamlit.components.v1 as comp
 from src.graphs.write_graph_v2 import planning_graph, drafting_graph
 from src.db import (
     create_writing_project,
@@ -23,7 +20,7 @@ def render():
 
     render_history_panel()
 
-    steps = ["1. 素材与定调", "2. 架构与大纲", "3. 采编与撰写", "4. 成稿"]
+    steps = ["1. 素材与定调", "2. 架构与大纲", "3. 采编与撰写", "4. 成稿与发行"]
     current_step = 0
     if st.session_state.newsroom_state:
         s = st.session_state.newsroom_state
@@ -31,7 +28,6 @@ def render():
             current_step = 3
         elif s.get("outline"):
             current_step = 2
-        # 选了角度但尚未生成大纲时，直接进入大纲/执行阶段
         elif s.get("selected_angle"):
             current_step = 2
         elif s.get("generated_angles"):
@@ -181,46 +177,48 @@ def render_step_final():
     state = st.session_state.newsroom_state
     st.subheader("📰 最终成稿")
 
-    col1, col2 = st.columns([2, 1])
+    tab_text, tab_card = st.tabs(["📄 文字稿件", "🖼️ 生成知识卡片"])
 
-    with col1:
-        st.markdown(state["final_article"])
-        st.divider()
-        share_img = build_share_image(
+    with tab_text:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(state["final_article"])
+        with col2:
+            st.info("💡 主编审阅意见")
+            st.markdown(state.get("critique_notes", "无意见"))
+            st.divider()
+            if st.button("💾 归档到项目库", use_container_width=True):
+                try:
+                    pid = create_writing_project(
+                        title=state["selected_angle"].get("title", "未命名项目"),
+                        requirements=state["user_requirement"],
+                        source_type="newsroom_v2",
+                        source_data=json.dumps(state["selected_angle"], ensure_ascii=False),
+                    )
+                    update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
+                    update_project_draft(pid, state["final_article"])
+                    st.success(f"已保存！项目ID: {pid}")
+                except Exception as e:
+                    st.error(f"保存失败: {e}")
+
+            if st.button("🔄 重新润色", use_container_width=True):
+                if "final_article" in state:
+                    del state["final_article"]
+                st.rerun()
+
+            st.markdown("---")
+            if st.button("🔙 开始新项目", use_container_width=True):
+                st.session_state.newsroom_state = None
+                st.rerun()
+
+    with tab_card:
+        st.markdown("##### 📸 知识卡片预览")
+        st.caption("基于 HTML5 渲染，支持高清中文下载。")
+        render_html_card(
             title=state["selected_angle"].get("title", "新闻工作室稿件"),
-            content=state["final_article"],
+            content_md=state["final_article"],
+            source_tag="DeepSeek Newsroom",
         )
-        st.image(share_img, caption="分享图预览")
-        st.download_button("📤 下载分享图（PNG）", data=share_img, file_name="newsroom_share.png", mime="image/png")
-        if st.button("🔄 不满意？重新润色"):
-            if "final_article" in state:
-                del state["final_article"]
-            st.rerun()
-
-    with col2:
-        st.info("💡 主编审阅意见")
-        st.markdown(state.get("critique_notes", "无意见"))
-
-        st.divider()
-        st.success("🎉 稿件已就绪")
-        if st.button("💾 归档到项目库"):
-            try:
-                outline_json = json.dumps(state["outline"], ensure_ascii=False)
-                pid = create_writing_project(
-                    title=state["selected_angle"].get("title", "未命名项目"),
-                    requirements=state["user_requirement"],
-                    source_type="newsroom_v2",
-                    source_data=json.dumps(state["selected_angle"], ensure_ascii=False),
-                )
-                update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
-                update_project_draft(pid, state["final_article"])
-                st.success(f"已保存！项目ID: {pid}")
-            except Exception as e:
-                st.error(f"保存失败: {e}")
-
-    if st.button("🔙 开始新项目"):
-        st.session_state.newsroom_state = None
-        st.rerun()
 
 
 # === 历史项目查看 ===
@@ -237,65 +235,165 @@ def render_history_panel():
         if not data:
             st.error("项目数据不存在或已删除")
             return
+
         st.markdown(f"### {data['title']}")
         st.caption(f"需求：{data.get('requirements','')}")
         st.divider()
-        st.markdown("#### 大纲")
-        outline = data.get("outline_data", [])
-        if outline:
-            for i, sec in enumerate(outline):
-                st.markdown(f"- {i+1}. {sec.get('title','')}: {sec.get('gist', sec.get('desc',''))}")
-        else:
-            st.text("无大纲记录")
-        st.divider()
-        st.markdown("#### 成稿")
+        st.markdown("#### 成稿内容")
         st.markdown(data.get("full_draft", "无成稿"))
+
+        st.divider()
+        st.markdown("#### 📸 知识卡片")
         if data.get("full_draft"):
-            img_bytes = build_share_image(data["title"], data["full_draft"])
-            st.image(img_bytes, caption="分享图预览")
-            st.download_button(
-                "📤 下载分享图（PNG）",
-                data=img_bytes,
-                file_name=f"{data['title']}_share.png",
-                mime="image/png",
+            render_html_card(
+                title=data["title"],
+                content_md=data["full_draft"],
+                source_tag="DeepSeek Newsroom Archive",
             )
 
 
-def build_share_image(title: str, content: str) -> bytes:
-    """生成可分享的 PNG 图片"""
-    width, height = 900, 1600
-    bg_color = (245, 248, 252)
-    text_color = (20, 24, 35)
-    accent = (30, 90, 255)
+def render_html_card(title, content_md, source_tag):
+    """基于 HTML+html2canvas 生成知识卡片，避免中文乱码"""
+    import markdown
+    import re
 
-    img = Image.new("RGB", (width, height), bg_color)
-    draw = ImageDraw.Draw(img)
-    font_title = ImageFont.load_default()
-    font_body = ImageFont.load_default()
+    html_content = markdown.markdown(content_md)
+    clean_title = re.sub(r"[^\w\s-]", "", title).strip() or "newsroom_card"
 
-    # 标题
-    margin = 40
-    y = margin
-    draw.text((margin, y), "DeepSeek 新闻工作室", fill=accent, font=font_title)
-    y += 40
-    draw.text((margin, y), title[:60], fill=text_color, font=font_title)
-    y += 50
-    draw.line((margin, y, width - margin, y), fill=accent, width=2)
-    y += 20
+    html_template = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&display=swap');
+            body {{
+                background-color: #f0f2f6;
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+            }}
+            #card-container {{
+                width: 450px;
+                background: white;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+                overflow: hidden;
+                position: relative;
+            }}
+            .card-header {{
+                background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%);
+                color: white;
+                padding: 40px 30px;
+                position: relative;
+            }}
+            .card-tag {{
+                font-size: 10px;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                opacity: 0.8;
+                margin-bottom: 10px;
+                border: 1px solid rgba(255,255,255,0.4);
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 20px;
+            }}
+            .card-title {{
+                font-family: 'Noto Serif SC', "Microsoft YaHei", serif;
+                font-size: 26px;
+                font-weight: 700;
+                line-height: 1.4;
+                margin: 0;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }}
+            .card-body {{
+                padding: 30px;
+                color: #333;
+                font-size: 14px;
+                line-height: 1.8;
+                text-align: justify;
+                background-image: radial-gradient(#e6e6e6 1px, transparent 1px);
+                background-size: 20px 20px;
+                background-color: #fff;
+            }}
+            .card-body h1, .card-body h2 {{
+                font-size: 18px;
+                color: #2c3e50;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                border-left: 4px solid #4ca1af;
+                padding-left: 10px;
+            }}
+            .card-body h3 {{ font-size: 16px; color: #444; margin-top: 15px; }}
+            .card-body p {{ margin-bottom: 15px; }}
+            .card-body strong {{ color: #000; font-weight: 700; }}
+            .card-body ul {{ padding-left: 20px; margin-bottom: 15px; }}
+            .card-body li {{ margin-bottom: 5px; }}
+            .card-footer {{
+                background: #f8f9fa;
+                padding: 15px 30px;
+                text-align: center;
+                font-size: 12px;
+                color: #888;
+                border-top: 1px dashed #ddd;
+            }}
+            .dl-btn {{
+                margin-top: 20px;
+                padding: 12px 24px;
+                background: #ff4b4b;
+                color: white;
+                border: none;
+                border-radius: 50px;
+                font-size: 14px;
+                font-weight: bold;
+                cursor: pointer;
+                box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);
+                transition: transform 0.1s;
+                font-family: "Microsoft YaHei", sans-serif;
+            }}
+            .dl-btn:active {{ transform: scale(0.95); }}
+            .dl-btn:hover {{ background: #ff3333; }}
+        </style>
+    </head>
+    <body>
+        <div id="card-container">
+            <div class="card-header">
+                <div class="card-tag">{source_tag}</div>
+                <div class="card-title">{title}</div>
+            </div>
+            <div class="card-body">
+                {html_content}
+            </div>
+            <div class="card-footer">
+                Powered by DeepSeek RAG Pro
+            </div>
+        </div>
+        <button class="dl-btn" onclick="downloadCard()">📸 保存为图片</button>
+        <script>
+            function downloadCard() {{
+                const node = document.getElementById('card-container');
+                const btn = document.querySelector('.dl-btn');
+                btn.innerText = "⏳ 生成中...";
+                html2canvas(node, {{
+                    scale: 2,
+                    useCORS: true,
+                    backgroundColor: "#ffffff",
+                    scrollY: 0
+                }}).then(canvas => {{
+                    const link = document.createElement('a');
+                    link.download = '{clean_title}_知识卡片.png';
+                    link.href = canvas.toDataURL("image/png");
+                    link.click();
+                    btn.innerText = "📸 保存为图片";
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """
 
-    # 内容摘要
-    snippet = content.replace("\n", " ")
-    snippet = " ".join(snippet.split())
-    snippet = snippet[:1200]
-    wrapped = textwrap.wrap(snippet, width=42)
-    for line in wrapped[:40]:
-        draw.text((margin, y), line, fill=text_color, font=font_body)
-        y += 22
-        if y > height - 80:
-            break
-
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-    return buffer.getvalue()
+    comp.html(html_template, height=800, scrolling=True)
 
