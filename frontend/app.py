@@ -39,6 +39,9 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+# 添加 next_query 的初始化
+if "next_query" not in st.session_state:
+    st.session_state.next_query = ""
 
 def main():
     try:
