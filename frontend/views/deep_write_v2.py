@@ -12,13 +12,16 @@ from src.db import (
 
 
 def render():
+    # 侧边栏历史项目
+    with st.sidebar:
+        st.header("📜 历史项目")
+        render_history_sidebar()
+
     st.header("📰 DeepSeek 新闻工作室 (Writing 2.0)")
     st.caption("Context Caching 驱动 | 采编室模式 | 事实核查 | 深度润色")
 
     if "newsroom_state" not in st.session_state:
         st.session_state.newsroom_state = None
-
-    render_history_panel()
 
     steps = ["1. 素材与定调", "2. 架构与大纲", "3. 采编与撰写", "4. 成稿与发行"]
     current_step = 0
@@ -71,6 +74,12 @@ def render_step_setup():
             st.error("请提供内容和需求")
             return
 
+        # 长度保护
+        MAX_CHARS = 50000
+        if len(full_content) > MAX_CHARS:
+            st.warning(f"⚠️ 文档过长 ({len(full_content)} 字)，已截取前 {MAX_CHARS} 字。完整分析建议使用「深度解读」。")
+            full_content = full_content[:MAX_CHARS] + "\n...(内容已截断)..."
+
         with st.spinner("首席策划正在分析文档..."):
             initial_state = {
                 "full_content": full_content,
@@ -83,13 +92,15 @@ def render_step_setup():
                 "loop_count": 0,
             }
 
-            for step in planning_graph.stream(initial_state):
-                for node, update in step.items():
-                    if "generated_angles" in update:
-                        initial_state.update(update)
-
-            st.session_state.newsroom_state = initial_state
-            st.rerun()
+            try:
+                for step in planning_graph.stream(initial_state):
+                    for node, update in step.items():
+                        if "generated_angles" in update:
+                            initial_state.update(update)
+                st.session_state.newsroom_state = initial_state
+                st.rerun()
+            except Exception as e:
+                st.error(f"分析失败，可能是内容过长或网络波动：{e}")
 
 
 def render_step_angle_selection():
@@ -180,13 +191,15 @@ def render_step_final():
     tab_text, tab_card = st.tabs(["📄 文字稿件", "🖼️ 生成知识卡片"])
 
     with tab_text:
-        col1, col2 = st.columns([3, 1])
+        if state.get("critique_notes"):
+            with st.expander("🧐 查看主编审阅意见 (Reviewer Notes)", expanded=False):
+                st.info(state["critique_notes"])
+
+        st.markdown(state["final_article"])
+        st.divider()
+
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(state["final_article"])
-        with col2:
-            st.info("💡 主编审阅意见")
-            st.markdown(state.get("critique_notes", "无意见"))
-            st.divider()
             if st.button("💾 归档到项目库", use_container_width=True):
                 try:
                     pid = create_writing_project(
@@ -200,13 +213,12 @@ def render_step_final():
                     st.success(f"已保存！项目ID: {pid}")
                 except Exception as e:
                     st.error(f"保存失败: {e}")
-
+        with col2:
             if st.button("🔄 重新润色", use_container_width=True):
                 if "final_article" in state:
                     del state["final_article"]
                 st.rerun()
-
-            st.markdown("---")
+        with col3:
             if st.button("🔙 开始新项目", use_container_width=True):
                 st.session_state.newsroom_state = None
                 st.rerun()
@@ -221,35 +233,31 @@ def render_step_final():
         )
 
 
-# === 历史项目查看 ===
-def render_history_panel():
-    with st.expander("📜 查看历史项目（Newsroom）", expanded=False):
-        projects = get_projects_by_source("newsroom_v2")
-        if not projects:
-            st.info("暂无历史项目。")
-            return
-        options = {f"{p['title']} ({p['updated_at'][:10]})": p["id"] for p in projects}
-        selected = st.selectbox("选择项目查看", list(options.keys()))
-        project_id = options[selected]
-        data = get_writing_project(project_id)
-        if not data:
-            st.error("项目数据不存在或已删除")
-            return
+# 历史项目侧边栏
+def render_history_sidebar():
+    projects = get_projects_by_source("newsroom_v2")
+    if not projects:
+        st.caption("暂无历史项目。")
+        return
 
-        st.markdown(f"### {data['title']}")
-        st.caption(f"需求：{data.get('requirements','')}")
-        st.divider()
-        st.markdown("#### 成稿内容")
-        st.markdown(data.get("full_draft", "无成稿"))
-
-        st.divider()
-        st.markdown("#### 📸 知识卡片")
-        if data.get("full_draft"):
-            render_html_card(
-                title=data["title"],
-                content_md=data["full_draft"],
-                source_tag="DeepSeek Newsroom Archive",
-            )
+    st.markdown("---")
+    for p in projects:
+        if st.button(f"📄 {p['title']}", key=f"hist_{p['id']}", use_container_width=True, help=f"更新时间: {p['updated_at']}"):
+            data = get_writing_project(p["id"])
+            if data:
+                st.session_state.newsroom_state = {
+                    "full_content": "（从历史记录恢复，无原始内容）",
+                    "user_requirement": data.get("requirements", ""),
+                    "generated_angles": [],
+                    "selected_angle": json.loads(data.get("source_data", "{}")),
+                    "outline": data.get("outline_data", []),
+                    "section_drafts": [],
+                    "current_section_index": 999,
+                    "loop_count": 0,
+                    "final_article": data.get("full_draft", ""),
+                    "critique_notes": data.get("research_report", ""),
+                }
+                st.rerun()
 
 
 def render_html_card(title, content_md, source_tag):
