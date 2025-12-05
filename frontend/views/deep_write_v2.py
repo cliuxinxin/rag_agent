@@ -20,6 +20,9 @@ def render():
             current_step = 3
         elif s.get("outline"):
             current_step = 2
+        # 选了角度但尚未生成大纲时，直接进入大纲/执行阶段
+        elif s.get("selected_angle"):
+            current_step = 2
         elif s.get("generated_angles"):
             current_step = 1
 
