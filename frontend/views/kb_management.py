@@ -1,6 +1,7 @@
 # frontend/views/kb_management.py
 import streamlit as st
-from src.storage import list_kbs, delete_kb, get_kb_details, load_file, split_documents, save_kb
+from src.storage import list_kbs, delete_kb, get_kb_details, save_kb
+from src.utils import load_file, split_documents
 from langchain_core.documents import Document
 
 def render():
