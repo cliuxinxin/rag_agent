@@ -72,3 +72,31 @@ class WriterState(TypedDict):
     # === 控制 ===
     loop_count: int
     next: str
+
+
+# === [新增] DeepSeek Newsroom 专用状态 ===
+class NewsroomState(TypedDict):
+    # --- 静态缓存核心 ---
+    full_content: str       # 原始素材（用于 Context Caching）
+    user_requirement: str   # 用户原始需求
+
+    # --- 阶段 1: 策划 ---
+    generated_angles: List[dict]  # AI 生成的切入角度
+    selected_angle: dict          # 用户或 AI 选定的角度
+
+    # --- 阶段 2: 架构 ---
+    outline: List[dict]           # 结构化大纲
+
+    # --- 阶段 3: 采编与撰写 (循环) ---
+    current_section_index: int
+    section_drafts: List[str]
+    research_cache: str
+
+    # --- 阶段 4: 审阅与定稿 ---
+    full_draft: str
+    critique_notes: str
+    final_article: str
+
+    # --- 控制 ---
+    loop_count: int
+    next: str
