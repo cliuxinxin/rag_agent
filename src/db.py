@@ -279,6 +279,20 @@ def get_all_projects() -> List[Dict]:
     conn.close()
     return [dict(row) for row in rows]
 
+
+def get_projects_by_source(source_type: str) -> List[Dict]:
+    """按 source_type 查询项目列表（含更新时间）"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, title, source_type, created_at, updated_at FROM writing_projects WHERE source_type = ? ORDER BY updated_at DESC",
+        (source_type,),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 def delete_project(project_id: str):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()

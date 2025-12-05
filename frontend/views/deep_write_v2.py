@@ -1,8 +1,17 @@
 import streamlit as st
 import time
 import json
+import textwrap
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 from src.graphs.write_graph_v2 import planning_graph, drafting_graph
-from src.db import create_writing_project, update_project_draft, update_project_outline
+from src.db import (
+    create_writing_project,
+    update_project_draft,
+    update_project_outline,
+    get_projects_by_source,
+    get_writing_project,
+)
 
 
 def render():
@@ -11,6 +20,8 @@ def render():
 
     if "newsroom_state" not in st.session_state:
         st.session_state.newsroom_state = None
+
+    render_history_panel()
 
     steps = ["1. 素材与定调", "2. 架构与大纲", "3. 采编与撰写", "4. 成稿"]
     current_step = 0
@@ -175,6 +186,12 @@ def render_step_final():
     with col1:
         st.markdown(state["final_article"])
         st.divider()
+        share_img = build_share_image(
+            title=state["selected_angle"].get("title", "新闻工作室稿件"),
+            content=state["final_article"],
+        )
+        st.image(share_img, caption="分享图预览")
+        st.download_button("📤 下载分享图（PNG）", data=share_img, file_name="newsroom_share.png", mime="image/png")
         if st.button("🔄 不满意？重新润色"):
             if "final_article" in state:
                 del state["final_article"]
@@ -204,4 +221,81 @@ def render_step_final():
     if st.button("🔙 开始新项目"):
         st.session_state.newsroom_state = None
         st.rerun()
+
+
+# === 历史项目查看 ===
+def render_history_panel():
+    with st.expander("📜 查看历史项目（Newsroom）", expanded=False):
+        projects = get_projects_by_source("newsroom_v2")
+        if not projects:
+            st.info("暂无历史项目。")
+            return
+        options = {f"{p['title']} ({p['updated_at'][:10]})": p["id"] for p in projects}
+        selected = st.selectbox("选择项目查看", list(options.keys()))
+        project_id = options[selected]
+        data = get_writing_project(project_id)
+        if not data:
+            st.error("项目数据不存在或已删除")
+            return
+        st.markdown(f"### {data['title']}")
+        st.caption(f"需求：{data.get('requirements','')}")
+        st.divider()
+        st.markdown("#### 大纲")
+        outline = data.get("outline_data", [])
+        if outline:
+            for i, sec in enumerate(outline):
+                st.markdown(f"- {i+1}. {sec.get('title','')}: {sec.get('gist', sec.get('desc',''))}")
+        else:
+            st.text("无大纲记录")
+        st.divider()
+        st.markdown("#### 成稿")
+        st.markdown(data.get("full_draft", "无成稿"))
+        if data.get("full_draft"):
+            img_bytes = build_share_image(data["title"], data["full_draft"])
+            st.image(img_bytes, caption="分享图预览")
+            st.download_button(
+                "📤 下载分享图（PNG）",
+                data=img_bytes,
+                file_name=f"{data['title']}_share.png",
+                mime="image/png",
+            )
+
+
+def build_share_image(title: str, content: str) -> bytes:
+    """生成可分享的 PNG 图片"""
+    width, height = 900, 1600
+    bg_color = (245, 248, 252)
+    text_color = (20, 24, 35)
+    accent = (30, 90, 255)
+
+    img = Image.new("RGB", (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+    font_title = ImageFont.load_default()
+    font_body = ImageFont.load_default()
+
+    # 标题
+    margin = 40
+    y = margin
+    draw.text((margin, y), "DeepSeek 新闻工作室", fill=accent, font=font_title)
+    y += 40
+    draw.text((margin, y), title[:60], fill=text_color, font=font_title)
+    y += 50
+    draw.line((margin, y, width - margin, y), fill=accent, width=2)
+    y += 20
+
+    # 内容摘要
+    snippet = content.replace("\n", " ")
+    snippet = " ".join(snippet.split())
+    snippet = snippet[:1200]
+    wrapped = textwrap.wrap(snippet, width=42)
+    for line in wrapped[:40]:
+        draw.text((margin, y), line, fill=text_color, font=font_body)
+        y += 22
+        if y > height - 80:
+            break
+
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer.getvalue()
 

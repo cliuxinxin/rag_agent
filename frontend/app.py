@@ -11,8 +11,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # 导入视图
-# === 修改点：导入 deep_write_v2 ===
-from frontend.views import chat, deep_read, deep_qa, deep_write, kb_management, deep_write_v2
+from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2
 from src.db import init_db
 
 load_dotenv()
@@ -69,8 +68,8 @@ def main():
             # 这里的顺序对应下面的 if-else
             page = st.radio(
                 "导航",
-                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "✍️ 深度写作 (Beta)", "📰 新闻工作室 (New)", "⚙️ 知识库"],
-                index=4,
+                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "📰 新闻工作室 (New)", "⚙️ 知识库"],
+                index=3,
             )
 
         if page == "💬 对话":
@@ -79,8 +78,6 @@ def main():
             deep_read.render()
         elif page == "❓ 深度追问":
             deep_qa.render()
-        elif page == "✍️ 深度写作 (Beta)":
-            deep_write.render()
         elif page == "📰 新闻工作室 (New)":
             deep_write_v2.render()
         else:
