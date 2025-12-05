@@ -1,10 +1,17 @@
 # frontend/views/chat.py
 import streamlit as st
-from src.graph import graph
+
+# === 修改开始 ===
+# [删除] from src.graph import graph
+# [新增] 引用新的 chat_graph，并重命名为 graph 以兼容下方代码
+from src.graphs.chat_graph import chat_graph as graph 
+# === 修改结束 ===
+
 from src.utils import load_file, split_documents
-from src.storage import load_kbs
+from src.storage import load_kbs, list_kbs # 补全 list_kbs
 from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
-from src.nodes import get_llm
+from src.nodes.common import get_llm # 确保引用路径正确
+from langchain_core.messages import HumanMessage, SystemMessage # 补全 SystemMessage
 
 # 初始化数据库
 init_db()

@@ -1,222 +1,173 @@
 # frontend/views/deep_read.py
 import streamlit as st
-from src.graph import graph
-from src.utils import load_file, split_documents
-from src.storage import load_kbs
-from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title, list_kbs
-from src.nodes import get_llm
-from langchain_core.messages import HumanMessage, SystemMessage
+import tempfile
+import os
+from langchain_community.document_loaders import PyPDFLoader
+
+# === 修改点：引用正确的图 ===
+from src.graphs.deep_read_graph import deep_read_graph
+# ==========================
+
+from src.db import init_db, create_session, save_report, get_all_reports, get_report_content, delete_report
+from src.nodes.common import get_llm
 
 # 初始化数据库
 init_db()
 
-def generate_smart_title(query, answer):
-    """使用 LLM 生成简短的会话标题"""
+def load_file_content(uploaded_file) -> str:
+    """提取文件文本"""
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    full_text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
     try:
-        llm = get_llm()
-        prompt = f"""
-        请根据以下对话内容，生成一个非常简短的标题（5-10个字以内），用于历史记录列表。
-        不要使用引号，直接输出标题文本。
-        
-        用户: {query[:200]}
-        AI: {answer[:200]}
-        """
-        response = llm.invoke([SystemMessage(content=prompt)])
-        title = response.content.strip().replace('"', '').replace('《', '').replace('》', '')
-        return title if len(title) < 15 else title[:15]
-    except:
-        return query[:10] + "..."
-
-def format_display_message(content):
-    split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】"]
-    split_index = -1
-    for marker in split_markers:
-        idx = content.find(marker)
-        if idx != -1:
-            if split_index == -1 or idx < split_index:
-                split_index = idx
-    if split_index != -1:
-        analysis_part = content[:split_index]
-        evidence_part = content[split_index:]
-        with st.container():
-            st.markdown(analysis_part)
-            with st.expander("查看详细调研信息"):
-                st.markdown(evidence_part)
-    else:
-        st.markdown(content)
-
-def render_history_sidebar():
-    st.markdown("### 💬 聊天历史")
-    
-    # 新建对话按钮
-    with st.container():
-        st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
-        if st.button("➕ 开启新对话", use_container_width=True, type="primary"):
-            new_id = create_session()
-            st.session_state.current_session_id = new_id
-            st.session_state.messages = []
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    sessions = get_all_sessions()
-    
-    # 自动加载逻辑
-    if st.session_state.current_session_id is None:
-        if sessions:
-            st.session_state.current_session_id = sessions[0]['id']
-            st.session_state.messages = get_messages(sessions[0]['id'])
+        if file_ext == "pdf":
+            loader = PyPDFLoader(tmp_path)
+            pages = loader.load()
+            full_text = "\n\n".join([p.page_content for p in pages])
         else:
-            new_id = create_session()
-            st.session_state.current_session_id = new_id
-            st.session_state.messages = []
-    
-    # 渲染列表
-    scroll_container = st.container(height=500, border=False)
-    with scroll_container:
-        for s in sessions:
-            is_selected = (s['id'] == st.session_state.current_session_id)
-            
-            # 使用列布局：左边是标题按钮，右边是删除按钮
-            col1, col2 = st.columns([5, 1])
-            
-            with col1:
-                # 选中的会话使用 primary 样式，其他的用 secondary (CSS 会处理成透明背景)
-                btn_type = "primary" if is_selected else "secondary"
-                icon = "📂" if is_selected else "🗨️"
-                
-                if st.button(f"{icon} {s['title']}", key=f"sess_{s['id']}", use_container_width=True, type=btn_type):
-                    st.session_state.current_session_id = s['id']
-                    st.session_state.messages = get_messages(s['id'])
-                    st.rerun()
-            
-            with col2:
-                if st.button("🗑️", key=f"del_{s['id']}", help="删除此对话"):
-                    delete_session(s['id'])
-                    # 如果删除的是当前会话，重置
-                    if st.session_state.current_session_id == s['id']:
-                        st.session_state.current_session_id = None
-                        st.session_state.messages = []
-                    st.rerun()
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                full_text = f.read()
+    except Exception: pass
+    finally:
+        if os.path.exists(tmp_path): os.remove(tmp_path)
+    return full_text
 
 def render():
+    st.header("🧠 全文深度解读")
+    
+    # 侧边栏
     with st.sidebar:
-        st.subheader("🧠 知识库选择")
-        all_kbs = list_kbs()
-        selected_kbs = st.multiselect("选择知识库", all_kbs, default=all_kbs[0] if all_kbs else None)
-        st.session_state.selected_kbs = selected_kbs
-        
-        # 渲染历史记录
-        render_history_sidebar()
-    
-    st.header("🧠 深度解读")
-    
-    # 显示当前会话标题
-    if st.session_state.current_session_id:
-        sessions = get_all_sessions()
-        current_session = next((s for s in sessions if s['id'] == st.session_state.current_session_id), None)
-        if current_session:
-            st.subheader(f"当前会话: {current_session['title']}")
-    
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant":
-                format_display_message(msg["content"])
-            else:
-                st.markdown(msg["content"])
-    
-    preset_query = st.session_state.next_query
-    user_input = st.chat_input("请输入问题...")
-    
-    final_query = None
-    if user_input:
-        final_query = user_input
-        st.session_state.next_query = ""
-    elif preset_query:
-        final_query = preset_query
-        st.session_state.next_query = ""
-    
-    if final_query:
-        if not st.session_state.selected_kbs:
-            st.error("请选择知识库！")
-            return
-        
-        with st.spinner("加载索引..."):
-            source_documents, vector_store = load_kbs(st.session_state.selected_kbs)
-        
-        st.session_state.messages.append({"role": "user", "content": final_query})
-        # 保存用户消息到数据库
-        if st.session_state.current_session_id:
-            add_message(st.session_state.current_session_id, "user", final_query)
-        
-        with st.chat_message("user"):
-            st.markdown(final_query)
-        
-        initial_state = {
-            "messages": [HumanMessage(content=final_query)],
-            "source_documents": source_documents,
-            "vector_store": vector_store,
-            "next": "Supervisor",
-            "current_search_query": "",
-            "final_evidence": [],
-            "loop_count": 0,
-            "attempted_searches": [],
-            "research_notes": [],
-            "failed_topics": [],
-            # 深度解读专用字段（设置默认值）
-            "full_content": "",
-            "doc_title": "",
-            "current_question": "",
-            "qa_pairs": [],
-            "final_report": ""
-        }
-        
-        with st.chat_message("assistant"):
-            status_container = st.status("🕵️‍♂️ Agent 正在深度调研...", expanded=True)
-            final_answer = ""
-            
-            try:
-                graph_config = {"recursion_limit": 50}
-                for step in graph.stream(initial_state, config=graph_config):
-                    for node_name, update in step.items():
-                        if node_name == "Supervisor":
-                            next_node = update.get("next")
-                            query = update.get("current_search_query")
-                            loop = update.get("loop_count", 0)
-                            if next_node == "Searcher":
-                                status_container.write(f"🔄 **第 {loop} 轮调研**: 发现缺口，指派搜索 `{query}`")
-                            elif next_node == "Answerer":
-                                status_container.write("✅ **决策**: 信息充足，正在撰写报告...")
-                        elif node_name == "Searcher":
-                            msgs = update.get("messages", [])
-                            if msgs:
-                                with status_container.expander(f"🔍 检索报告: {update.get('attempted_searches', [''])[0]}", expanded=False):
-                                    st.markdown(msgs[-1].content)
-                        elif node_name == "Answerer":
-                            msgs = update.get("messages", [])
-                            if msgs:
-                                final_answer = msgs[-1].content
-                
-                status_container.update(label="回答完成", state="complete", expanded=False)
-                
-                if final_answer:
-                    # 保存到历史
-                    st.session_state.messages.append({"role": "assistant", "content": final_answer})
-                    # 保存助手消息到数据库
-                    if st.session_state.current_session_id:
-                        add_message(st.session_state.current_session_id, "assistant", final_answer)
-                    
-                    # 生成智能标题（仅在第一轮对话后）
-                    if st.session_state.current_session_id and len(st.session_state.messages) == 2:
-                        smart_title = generate_smart_title(final_query, final_answer)
-                        update_session_title(st.session_state.current_session_id, smart_title)
-                        # 更新界面显示
+        st.markdown("---")
+        st.subheader("📜 历史报告")
+        history_reports = get_all_reports()
+        if not history_reports:
+            st.caption("暂无历史记录")
+        for rep in history_reports:
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                if st.button(f"📄 {rep['title']}", key=f"hist_{rep['id']}", help=f"来源: {rep['source_name']}"):
+                    full_data = get_report_content(rep['id'])
+                    if full_data:
+                        st.session_state.deep_state = "done"
+                        st.session_state.final_report = full_data['content']
                         st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"del_rep_{rep['id']}"):
+                    delete_report(rep['id'])
+                    st.rerun()
+
+    if "deep_state" not in st.session_state:
+        st.session_state.deep_state = "idle"
+
+    # 输入区域
+    input_mode = st.radio("选择输入来源", ["📁 上传文件", "📝 粘贴文本"], horizontal=True, label_visibility="collapsed")
+    st.markdown("---")
+
+    uploaded_file = None
+    text_input = ""
+    source_name = "Unknown"
+
+    if input_mode == "📁 上传文件":
+        uploaded_file = st.file_uploader("上传 PDF 或 TXT 文档", type=["pdf", "txt"], key="deep_upload")
+        if uploaded_file: source_name = uploaded_file.name
+    else:
+        text_input = st.text_area("直接粘贴文本内容", height=300)
+        if text_input: source_name = f"文本: {text_input[:30]}..."
+
+    start_disabled = not (uploaded_file or (text_input and len(text_input.strip()) > 50))
+
+    if st.button("🚀 开始深度解读", type="primary", disabled=start_disabled):
+        st.session_state.deep_state = "running"
+        st.session_state.final_report = ""
+        st.session_state.deep_logs = [] # 初始化日志
+        
+        full_text_content = ""
+        with st.spinner("正在提取并缓存全文..."):
+            if uploaded_file:
+                full_text_content = load_file_content(uploaded_file)
+            elif text_input:
+                full_text_content = text_input
+        
+        if not full_text_content:
+            st.error("内容为空")
+            return
+
+        # 初始化状态，符合 AgentState 定义
+        st.session_state.deep_input = {
+            "messages": [], 
+            "full_content": full_text_content, 
+            "doc_title": source_name,
+            "next": "Planner", 
+            "loop_count": 0, 
+            "qa_pairs": [], 
+            "current_question": "", 
+            "final_report": "",
+            # 补全 AgentState 缺少的字段防止报错
+            "user_goal": "", 
+            "suggested_questions": [], 
+            "source_documents": [], 
+            "vector_store": None,
+            "current_search_query": "", 
+            "final_evidence": [], 
+            "attempted_searches": [], 
+            "failed_topics": [], 
+            "research_notes": []
+        }
+        st.rerun()
+
+    # 运行展示区域
+    if st.session_state.deep_state == "running":
+        status_box = st.status("🕵️‍♂️ DeepSeek 深度思考中...", expanded=True)
+        final_report = ""
+        
+        try:
+            # === 关键：调用 deep_read_graph ===
+            for step in deep_read_graph.stream(st.session_state.deep_input, config={"recursion_limit": 50}):
+                for node, update in step.items():
+                    if node == "Planner":
+                        question = update.get("current_question")
+                        if question:
+                            status_box.write(f"🤔 **Planner**: 发现盲点，正在追问：`{question}`")
+                        else:
+                            status_box.write("✅ **Planner**: 核心信息收集完毕...")
+                            
+                    elif node == "Researcher":
+                        qa_pairs = update.get("qa_pairs", [])
+                        if qa_pairs:
+                            # 提取最新的 QA 显示
+                            latest = qa_pairs[-1]
+                            ans_preview = latest.split("**A**:")[-1][:50] + "..." if "**A**:" in latest else "..."
+                            status_box.write(f"📚 **Researcher**: 已查证 - {ans_preview}")
                     
-                    # 渲染当前回答 (使用优化后的格式化函数)
-                    format_display_message(final_answer)
+                    elif node == "Writer":
+                        status_box.write("✍️ **Writer**: 正在撰写《深度解读报告》主体部分...")
+                        final_report = update.get("final_report")
+                    
+                    elif node == "Outlooker":
+                        status_box.write("🔭 **Outlooker**: 正在补充扩展思考...")
+                        final_report = update.get("final_report")
+
+            status_box.update(label="解读完成！已自动保存。", state="complete", expanded=False)
+            st.session_state.final_report = final_report
+            st.session_state.deep_state = "done"
             
-            except Exception as e:
-                status_container.update(label="Error", state="error")
-                st.error(f"运行错误: {e}")
+            # 自动保存
+            doc_title = st.session_state.deep_input.get("doc_title", "未命名")
+            save_report(f"解读: {doc_title}", doc_title, final_report)
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"运行出错: {e}")
+            st.session_state.deep_state = "idle"
+
+    # 结果展示区域
+    if st.session_state.deep_state == "done" and st.session_state.final_report:
+        st.divider()
+        st.subheader("📝 深度解读报告")
+        st.markdown(st.session_state.final_report)
+        st.divider()
+        if st.button("🔙 返回首页"):
+            st.session_state.deep_state = "idle"
+            st.rerun()
