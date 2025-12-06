@@ -76,6 +76,9 @@ class WriterState(TypedDict):
 
 # === [新增] DeepSeek Newsroom 专用状态 ===
 class NewsroomState(TypedDict):
+    # --- 身份标识 ---
+    project_id: str         # [新增] 数据库中的项目ID，用于区分新建还是更新
+
     # --- 静态缓存核心 ---
     full_content: str       # 原始素材（用于 Context Caching）
     user_requirement: str   # 用户原始需求

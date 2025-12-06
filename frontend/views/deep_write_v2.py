@@ -11,6 +11,7 @@ from src.db import (
     update_project_outline,
     get_projects_by_source,
     get_writing_project,
+    delete_project # [新增引用]
 )
 
 def load_file_content(uploaded_file) -> str:
@@ -45,9 +46,17 @@ def load_file_content(uploaded_file) -> str:
     return full_text
 
 def render():
-    # 侧边栏历史项目
+    # === [修改] 侧边栏结构优化 ===
     with st.sidebar:
-        st.header("📜 历史项目")
+        st.header("🗞️ 新闻工作室")
+        
+        # 1. 新建项目按钮 (全局重置)
+        if st.button("➕ 开启新策划", type="primary", use_container_width=True):
+            st.session_state.newsroom_state = None
+            st.rerun()
+            
+        st.divider()
+        st.subheader("📜 项目历史")
         render_history_sidebar()
 
     st.header("📰 DeepSeek 新闻工作室 (Writing 2.0)")
@@ -120,6 +129,7 @@ def render_step_setup():
 
         with st.spinner("首席策划正在分析文档..."):
             initial_state = {
+                "project_id": None,  # [新增] 初始化为 None
                 "full_content": full_content,
                 "user_requirement": requirement,
                 "generated_angles": [],
@@ -238,17 +248,36 @@ def render_step_final():
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("💾 归档到项目库", use_container_width=True):
+            # 判断是否是已存在的项目
+            is_existing = state.get("project_id") is not None
+            btn_label = "💾 更新归档" if is_existing else "💾 新建归档"
+            
+            if st.button(btn_label, use_container_width=True, type="primary"):
                 try:
-                    pid = create_writing_project(
-                        title=state["selected_angle"].get("title", "未命名项目"),
-                        requirements=state["user_requirement"],
-                        source_type="newsroom_v2",
-                        source_data=json.dumps(state["selected_angle"], ensure_ascii=False),
-                    )
-                    update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
-                    update_project_draft(pid, state["final_article"])
-                    st.success(f"已保存！项目ID: {pid}")
+                    if is_existing:
+                        # 更新逻辑
+                        pid = state["project_id"]
+                        update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
+                        update_project_draft(pid, state["final_article"])
+                        st.success(f"项目已更新！(ID: {pid})")
+                    else:
+                        # 新建逻辑
+                        pid = create_writing_project(
+                            title=state["selected_angle"].get("title", "未命名项目"),
+                            requirements=state["user_requirement"],
+                            source_type="newsroom_v2",
+                            source_data=json.dumps(state["selected_angle"], ensure_ascii=False),
+                        )
+                        # 补全后续字段
+                        update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
+                        update_project_draft(pid, state["final_article"])
+                        
+                        # 回写 ID 到状态，避免重复创建
+                        state["project_id"] = pid
+                        st.success(f"已新建归档！(ID: {pid})")
+                        # 稍微延迟刷新以更新 Sidebar
+                        st.rerun()
+                        
                 except Exception as e:
                     st.error(f"保存失败: {e}")
         with col2:
@@ -257,7 +286,7 @@ def render_step_final():
                     del state["final_article"]
                 st.rerun()
         with col3:
-            if st.button("🔙 开始新项目", use_container_width=True):
+            if st.button("🔙 退出/重置", use_container_width=True):
                 st.session_state.newsroom_state = None
                 st.rerun()
 
@@ -280,26 +309,33 @@ def render_history_sidebar():
 
     st.markdown("---")
     for p in projects:
-        if st.button(
-            f"📄 {p['title']}",
-            key=f"hist_{p['id']}",
-            use_container_width=True,
-            help=f"更新时间: {p['updated_at']}",
-        ):
-            data = get_writing_project(p["id"])
-            if data:
-                st.session_state.newsroom_state = {
-                    "full_content": "（从历史记录恢复，无原始内容）",
-                    "user_requirement": data.get("requirements", ""),
-                    "generated_angles": [],
-                    "selected_angle": json.loads(data.get("source_data", "{}")),
-                    "outline": data.get("outline_data", []),
-                    "section_drafts": [],
-                    "current_section_index": 999,
-                    "loop_count": 0,
-                    "final_article": data.get("full_draft", ""),
-                    "critique_notes": data.get("research_report", ""),
-                }
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            if st.button(
+                f"📄 {p['title']}",
+                key=f"hist_{p['id']}",
+                use_container_width=True,
+                help=f"更新时间: {p['updated_at']}",
+            ):
+                data = get_writing_project(p["id"])
+                if data:
+                    st.session_state.newsroom_state = {
+                        "project_id": p["id"],  # [新增] 回填 project_id
+                        "full_content": "（从历史记录恢复，无原始内容）",
+                        "user_requirement": data.get("requirements", ""),
+                        "generated_angles": [],
+                        "selected_angle": json.loads(data.get("source_data", "{}")),
+                        "outline": data.get("outline_data", []),
+                        "section_drafts": [],
+                        "current_section_index": 999,
+                        "loop_count": 0,
+                        "final_article": data.get("full_draft", ""),
+                        "critique_notes": data.get("research_report", ""),
+                    }
+                    st.rerun()
+        with col2:
+            if st.button("🗑️", key=f"del_{p['id']}", help="删除该项目"):
+                delete_project(p["id"])
                 st.rerun()
 
 
