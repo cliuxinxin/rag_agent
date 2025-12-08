@@ -134,29 +134,42 @@ def render_step_setup():
             st.warning(f"⚠️ 文档过长 ({len(full_content)} 字)，已截取前 {MAX_CHARS} 字。")
             full_content = full_content[:MAX_CHARS] + "\n...(内容已截断)..."
 
-        with st.spinner("首席策划正在分析文档..."):
+        # [修改] 使用 status 容器来显示过程
+        with st.status("🚀 首席策划正在工作中...", expanded=True) as status_box:
             initial_state = {
-                "project_id": None,  # [新增] 初始化为 None
+                "project_id": None,
                 "full_content": full_content,
                 "user_requirement": requirement,
-                "enable_web_search": enable_search, # <--- [新增] 存入初始状态
+                "enable_web_search": enable_search,
                 "generated_angles": [],
-                "selected_angle": {},
-                "outline": [],
-                "section_drafts": [],
-                "current_section_index": 0,
-                "loop_count": 0,
+                "macro_search_context": "", # 初始化
+                "run_logs": [] # 初始化
             }
 
             try:
+                # [关键修改] 使用 .stream() 而不是 hidden loop
                 for step in planning_graph.stream(initial_state):
-                    for node, update in step.items():
-                        if "generated_angles" in update:
-                            initial_state.update(update)
+                    for node_name, update in step.items():
+                        # 更新状态
+                        initial_state.update(update)
+                        
+                        # [新增] 实时显示日志
+                        if "run_logs" in update:
+                            for log in update["run_logs"]:
+                                status_box.write(log)
+                        
+                        # 显示节点进度
+                        if node_name == "MacroSearch":
+                            status_box.write("✅ 背景调查完成，正在构思角度...")
+                        elif node_name == "AngleGen":
+                            status_box.write("✅ 角度构思完成，正在生成大纲...")
+
+                status_box.update(label="策划完成！", state="complete", expanded=False)
                 st.session_state.newsroom_state = initial_state
                 st.rerun()
+                
             except Exception as e:
-                st.error(f"分析失败，可能是内容过长或网络波动。错误信息: {e}")
+                st.error(f"出错: {e}")
 
 
 def render_step_angle_selection():
@@ -215,11 +228,16 @@ def run_drafting_loop():
         for step in drafting_graph.stream(state, config={"recursion_limit": 50}):
             for node_name, update in step.items():
                 state.update(update)
+                
+                # [新增] 优先显示日志 (搜索过程)
+                if "run_logs" in update:
+                    for log in update["run_logs"]:
+                        status_box.write(log) # 直接打印搜索动作
 
                 if node_name == "Researcher":
-                    sec_idx = state["current_section_index"]
-                    title = state["outline"][sec_idx]["title"]
-                    status_box.write(f"🕵️‍♂️ **内部探员**: 正在查证第 {sec_idx+1} 章【{title}】的素材...")
+                    # ... (原有提示代码)
+                    # status_box.write(...) # 可以保留或简化，因为上面已经打印了具体 log
+                    pass 
                 elif node_name == "Drafter":
                     sec_idx = state["current_section_index"]
                     finished_title = state["outline"][sec_idx - 1]["title"]

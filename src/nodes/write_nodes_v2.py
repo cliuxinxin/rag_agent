@@ -16,35 +16,47 @@ from src.tools.search import tavily_search
 
 
 # === 1. 策划阶段 (Planning) ===
+# [新增] 宏观搜索节点 (专门负责搜)
+def macro_search_node(state: NewsroomState) -> dict:
+    """策划阶段：宏观背景搜索"""
+    req = state["user_requirement"]
+    enable_search = state.get("enable_web_search", False)
+    llm = get_llm()
+    
+    if not enable_search:
+        return {"macro_search_context": "", "run_logs": ["⏭️ 未开启联网，跳过背景搜索..."]}
+    
+    # 1. 生成搜索词
+    query_gen_prompt = f"基于用户需求: '{req}'，生成一个用于Google搜索背景信息的关键词。只输出词，不要解释。"
+    keyword = llm.invoke([HumanMessage(content=query_gen_prompt)]).content.strip().replace('"', '')
+    
+    # 2. 执行搜索
+    log_msg = f"🌍 [策划] 正在全网搜索大背景: '{keyword}'..."
+    raw_res = tavily_search(keyword, max_results=3)
+    
+    # 3. 返回结果和日志
+    context = raw_res if raw_res else ""
+    return {
+        "macro_search_context": context, 
+        "run_logs": [log_msg, f"✅ 已找到相关背景资料 ({len(context)} chars)"]
+    }
+
+
 def angle_generator_node(state: NewsroomState) -> dict:
-    """首席策划：生成切入角度 (支持宏观搜索)"""
+    """首席策划：生成切入角度 (只负责生成)"""
     full_text = state["full_content"]
     req = state["user_requirement"]
-    enable_search = state.get("enable_web_search", False) # 获取开关
+    # [修改] 直接从 State 获取搜索结果，不再自己搜
+    search_context = state.get("macro_search_context", "")
 
     llm = get_llm()
-    search_context = ""
-
-    # === [新增] 宏观搜索 ===
-    if enable_search:
-        # 生成一个宏观搜索词
-        query_gen_prompt = f"基于用户需求: '{req}'，生成一个用于Google搜索背景信息的关键词。只输出词，不要解释。"
-        keyword = llm.invoke([HumanMessage(content=query_gen_prompt)]).content.strip().replace('"', '')
-        
-        # 执行搜索
-        print(f"🌍 [策划] Macro Search: {keyword}")
-        raw_res = tavily_search(keyword, max_results=3)
-        if raw_res:
-            search_context = raw_res
-
-    # === 调用原有逻辑 ===
     base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
-    # [修改] 传入 search_context
+    
+    # 传入 prompt
     user_msg = HumanMessage(content=get_angle_generator_prompt(search_context))
-
     response = llm.invoke([base_sys, user_msg]).content
 
-    # JSON 解析
+    # ... (JSON 解析代码不变) ...
     try:
         clean_json = response.replace("```json", "").replace("```", "").strip()
         angles = json.loads(clean_json)
@@ -95,17 +107,22 @@ def internal_researcher_node(state: NewsroomState) -> dict:
     section = outline[idx]
     llm = get_llm()
     
-    # === [新增] 微观搜索 ===
+    # [新增] 微观搜索
     search_context = ""
+    logs = [] # [新增] 日志列表
+    
     if enable_search:
-        # 构造查询词：章节标题 + 关键事实
         query = f"{section['title']} {section.get('key_facts', '')}"
-        print(f"🌍 [采编] Micro Search: {query}")
+        # [新增] 记录日志
+        logs.append(f"🌍 [采编] 正在核实第 {idx+1} 章数据: '{query}'")
         
         # 搜索 (只取前2条，保证速度)
         raw_res = tavily_search(query, max_results=2)
         if raw_res:
             search_context = raw_res
+            logs.append("✅ 网络取证完成")
+        else:
+            logs.append("⚠️ 网络搜索无结果，使用本地文档")
 
     base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
     # [修改] 传入 search_context
@@ -116,7 +133,8 @@ def internal_researcher_node(state: NewsroomState) -> dict:
     ))
 
     notes = llm.invoke([base_sys, user_msg]).content
-    return {"research_cache": notes, "next": "Drafter"}
+    # [修改] 返回 logs
+    return {"research_cache": notes, "next": "Drafter", "run_logs": logs}
 
 
 def section_drafter_node(state: NewsroomState) -> dict:

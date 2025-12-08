@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from src.state import NewsroomState
 from src.nodes.write_nodes_v2 import (
+    macro_search_node, # <--- [新增]
     angle_generator_node,
     outline_architect_node,
     internal_researcher_node,
@@ -14,12 +15,18 @@ from src.nodes.write_nodes_v2 import (
 # === 图 1: 策划与架构 (Planning Workflow) ===
 def build_planning_graph():
     wf = StateGraph(NewsroomState)
+    
+    # [修改] 注册 MacroSearch 节点
+    wf.add_node("MacroSearch", macro_search_node)
     wf.add_node("AngleGen", angle_generator_node)
     wf.add_node("OutlineGen", outline_architect_node)
 
-    wf.set_entry_point("AngleGen")
+    # [修改] 入口改为 MacroSearch
+    wf.set_entry_point("MacroSearch")
 
-    wf.add_edge("AngleGen", END)
+    # [修改] 连线：Search -> Angle -> Outline -> END
+    wf.add_edge("MacroSearch", "AngleGen") 
+    wf.add_edge("AngleGen", "OutlineGen")
     wf.add_edge("OutlineGen", END)
 
     return wf.compile()

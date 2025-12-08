@@ -106,3 +106,9 @@ class NewsroomState(TypedDict):
     # --- 控制 ---
     loop_count: int
     next: str
+    
+    # === [新增] 用于 UI 显示过程 ===
+    # 用于存储策划阶段搜到的背景信息
+    macro_search_context: str 
+    # 用于实时传回 Log (例如: "正在搜索 xxx...")，使用 add_strings 自动累加
+    run_logs: Annotated[List[str], add_strings]
