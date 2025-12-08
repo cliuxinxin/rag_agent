@@ -104,6 +104,13 @@ def render_step_setup():
         placeholder="例：写一篇关于 DeepSeek 技术原理的深度分析，面向非技术人员，通俗易懂但有深度。",
         height=100,
     )
+    
+    # === [新增] 搜索开关 ===
+    enable_search = st.checkbox(
+        "🌍 开启联网事实核查 (Tavily Search)", 
+        value=False,
+        help="开启后，策划阶段将搜索行业背景，采编阶段将自动核实数据。请确保 .env 中配置了 TAVILY_API_KEY。"
+    )
 
     if st.button("🚀 启动策划会", type="primary"):
         full_content = ""
@@ -132,6 +139,7 @@ def render_step_setup():
                 "project_id": None,  # [新增] 初始化为 None
                 "full_content": full_content,
                 "user_requirement": requirement,
+                "enable_web_search": enable_search, # <--- [新增] 存入初始状态
                 "generated_angles": [],
                 "selected_angle": {},
                 "outline": [],

@@ -131,18 +131,26 @@ def get_newsroom_base_prompt(content: str, requirement: str) -> str:
 """
 
 
-def get_angle_generator_prompt() -> str:
-    return """
+def get_angle_generator_prompt(search_context: str = "") -> str:
+    # 构造上下文插入内容
+    context_block = ""
+    if search_context:
+        context_block = f"""
+    【🌍 互联网背景趋势 (供参考)】
+    {search_context}
+    """
+
+    return f"""
     【任务：选题策划】
-    作为首席策划，请基于文档内容和用户需求，构思 3 个截然不同的写作切入角度（Angle）。
+    作为首席策划，请基于文档内容、用户需求{context_block}，构思 3 个截然不同的写作切入角度（Angle）。
     
     1. **深度解析型**：侧重逻辑、原理和深度分析。
     2. **故事叙述型**：侧重人物、时间线和冲突细节。
     3. **观点评论型**：侧重提炼核心观点，进行批判或赞赏。
     
-    请输出 JSON 格式：
+    请 output JSON 格式：
     [
-        {"title": "...", "desc": "...", "reasoning": "..."},
+        {{"title": "...", "desc": "...", "reasoning": "..."}},
         ...
     ]
     """
@@ -159,7 +167,7 @@ def get_outline_architect_prompt(angle: str) -> str:
     2. 每一章必须明确 "主旨 (Gist)" 和 "需引用的核心事实/数据 (Key Facts)"。
     3. 逻辑流畅，符合选定的切入角度。
     
-    请输出 JSON 格式：
+    请 output JSON 格式：
     [
         {{"title": "...", "gist": "本段核心讲...", "key_facts": "引用文档中关于xxx的数据..."}},
         ...
@@ -167,18 +175,27 @@ def get_outline_architect_prompt(angle: str) -> str:
     """
 
 
-def get_internal_researcher_prompt(section_title: str, key_facts_needed: str) -> str:
+def get_internal_researcher_prompt(section_title: str, key_facts_needed: str, search_context: str = "") -> str:
+    # 构造外部证据块
+    external_block = ""
+    if search_context:
+        external_block = f"""
+    【🌍 外部网络证据 (External Evidence)】
+    (注意：如果文档内容过时，请优先参考以下最新信息，并在笔记中标记来源为 [WEB])
+    {search_context}
+    """
+
     return f"""
     【任务：内部采编】
     我们要写章节：【{section_title}】
     需要用到的素材线索：{key_facts_needed}
     
-    请作为“内部探员”，在 <DOCUMENT_CACHE> 中**逐字逐句**检索相关信息。
-    提取出最精准的原文引用、数据或案例。如果文档里没有，请明确说明“无相关记录”。
+    请作为“内部探员”，综合 <DOCUMENT_CACHE> {external_block} 中的信息。
+    提取出最精准的原文引用、数据或案例。
     
-    输出格式：
-    - **事实 1**: ... (原文引用)
-    - **事实 2**: ... (原文引用)
+    Output format：
+    - **事实 1**: ... (来源: [DOC] 或 [WEB])
+    - **事实 2**: ... (来源: [DOC] 或 [WEB])
     - **推论**: ... (基于原文的合理推断)
     """
 
@@ -217,7 +234,7 @@ def get_editor_reviewer_prompt(full_draft: str) -> str:
     2. **废话过多**：是否有很多正确的废话？
     3. **语气**：是否符合用户最初的需求？
     
-    请输出一段具体的“审阅意见（Critique Notes）”，指导润色师进行修改。不要直接改写，只给意见。
+    请 output一段具体的“审阅意见（Critique Notes）”，指导润色师进行修改。不要直接改写，只给意见。
     """
 
 
@@ -232,5 +249,5 @@ def get_final_polisher_prompt(full_draft: str, critique_notes: str) -> str:
     {critique_notes}
     
     请作为金牌润色师，根据意见对初稿进行**全文重写或精修**。
-    输出最终成稿（Markdown格式）。标题要足够吸引人。
+    Output最终成稿（Markdown format）。标题要足够吸引人。
     """
