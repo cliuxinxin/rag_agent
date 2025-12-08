@@ -16,18 +16,22 @@ from src.nodes.write_nodes_v2 import (
 def build_planning_graph():
     wf = StateGraph(NewsroomState)
     
-    # [修改] 注册 MacroSearch 节点
+    # 注册节点
     wf.add_node("MacroSearch", macro_search_node)
     wf.add_node("AngleGen", angle_generator_node)
-    wf.add_node("OutlineGen", outline_architect_node)
+    # 注意：OutlineGen 虽然注册了，但在 UI 中是单独调用的，或者这里不需要连上
+    # 如果想保持代码整洁，可以先不注册 OutlineGen，或者注册了但不连线
+    # wf.add_node("OutlineGen", outline_architect_node) 
 
-    # [修改] 入口改为 MacroSearch
+    # 设置入口
     wf.set_entry_point("MacroSearch")
 
-    # [修改] 连线：Search -> Angle -> Outline -> END
+    # === [关键修复] ===
+    # 原来的错误连线： MacroSearch -> AngleGen -> OutlineGen -> END
+    # 正确的连线：    MacroSearch -> AngleGen -> END
+    
     wf.add_edge("MacroSearch", "AngleGen") 
-    wf.add_edge("AngleGen", "OutlineGen")
-    wf.add_edge("OutlineGen", END)
+    wf.add_edge("AngleGen", END)  # <--- 修改这里，让它在这里停下！
 
     return wf.compile()
 
