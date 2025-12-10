@@ -91,7 +91,7 @@ def render():
 
 
 def render_step_setup():
-    st.subheader("📁 第一步：导入素材")
+    st.subheader("📁 第一步：导入素材与配置")
 
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -99,17 +99,34 @@ def render_step_setup():
     with col2:
         text_input = st.text_area("或直接粘贴长文本", height=150)
 
-    requirement = st.text_area(
-        "写作需求/目标读者",
-        placeholder="例：写一篇关于 DeepSeek 技术原理的深度分析，面向非技术人员，通俗易懂但有深度。",
-        height=100,
-    )
+    st.markdown("---")
+    st.write("⚙️ **写作配置**")
     
-    # === [新增] 搜索开关 ===
+    # === [新增] 结构化配置区 ===
+    c1, c2 = st.columns(2)
+    with c1:
+        style_tone = st.selectbox(
+            "🎭 身份与语调",
+            ["客观中立 (分析师)", "深度专业 (技术专家)", "犀利独到 (资深主编)", "通俗易懂 (科普博主)", "正式公文 (报告风格)"],
+            index=0
+        )
+    with c2:
+        length_opt = st.select_slider(
+            "📏 预估篇幅",
+            options=["短讯 (500字)", "标准 (1500字)", "深度长文 (3000字+)", "超长调研 (5000字+)"],
+            value="标准 (1500字)"
+        )
+    
+    must_haves = st.text_area(
+        "📝 核心指令 / 必须包含的要素",
+        placeholder="例：必须包含与 OpenAI 的参数对比；重点强调成本优势；语气要充满信心...",
+        height=100
+    )
+
     enable_search = st.checkbox(
         "🌍 开启联网事实核查 (Tavily Search)", 
         value=False,
-        help="开启后，策划阶段将搜索行业背景，采编阶段将自动核实数据。请确保 .env 中配置了 TAVILY_API_KEY。"
+        help="开启后，策划阶段将搜索行业背景，采编阶段将自动核实数据。"
     )
 
     if st.button("🚀 启动策划会", type="primary"):
@@ -120,8 +137,8 @@ def render_step_setup():
         elif text_input:
             full_content = text_input
 
-        if not full_content or not requirement:
-            st.error("请提供内容和需求")
+        if not full_content or not must_haves:
+            st.error("请提供内容和核心指令")
             return
 
         if not full_content.strip():
@@ -136,10 +153,15 @@ def render_step_setup():
 
         # [修改] 使用 status 容器来显示过程
         with st.status("🚀 首席策划正在工作中...", expanded=True) as status_box:
+            # === [修改] 初始状态构造 ===
             initial_state = {
                 "project_id": None,
                 "full_content": full_content,
-                "user_requirement": requirement,
+                # 为了兼容性，我们将结构化数据拼接到 user_requirement，但也单独存
+                "user_requirement": must_haves, 
+                "style_tone": style_tone,    # 新增
+                "article_length": length_opt, # 新增
+                "must_haves": must_haves,    # 新增
                 "enable_web_search": enable_search,
                 "generated_angles": [],
                 "macro_search_context": "", # 初始化
@@ -191,28 +213,55 @@ def render_step_angle_selection():
                     st.rerun()
 
 
+# 引入 outline_refiner_node
+from src.nodes.write_nodes_v2 import outline_architect_node, outline_refiner_node 
+
 def render_step_execution():
-    st.subheader("🏗️ 第三步：架构与执行")
+    st.subheader("🏗️ 第三步：架构与大纲修订")
     state = st.session_state.newsroom_state
 
+    # 1. 如果没有大纲，先生成大纲 (原有逻辑)
     if not state.get("outline"):
         with st.status("🏗️ 架构师正在绘制蓝图...", expanded=True) as status:
-            from src.nodes.write_nodes_v2 import outline_architect_node
-
             update = outline_architect_node(state)
             state.update(update)
-            status.update(label="大纲已生成！", state="complete")
+            status.update(label="初版大纲已生成！", state="complete")
             st.rerun()
 
+    # 2. [新增] 大纲交互区 (谈判桌)
+    st.info("💡 请检查下方大纲。如果不满意，可在下方直接输入修改意见，AI 将自动调整结构。")
+    
+    # 显示大纲卡片
     outline = state.get("outline", [])
-    with st.expander("📝 查看/调整大纲", expanded=True):
+    with st.container(border=True):
+        st.markdown(f"### 📑 大纲预览 (v{state.get('loop_count', 0) + 1})")
         for i, sec in enumerate(outline):
             st.markdown(f"**{i+1}. {sec['title']}**")
             st.caption(f"主旨: {sec['gist']}")
-            st.text(f"关键事实: {sec.get('key_facts', '无')}")
-            st.divider()
+            # st.text(f"关键事实: {sec.get('key_facts', '无')}") # 可以稍微折叠一下细节以免太长
+    
+    # 3. [新增] 修改意见输入框
+    col_input, col_btn = st.columns([4, 1])
+    with col_input:
+        user_feedback = st.text_input("💬 给架构师的修改指令", placeholder="例：删掉第3章；在第1章后增加‘市场背景’；把结尾改得更激昂一点...")
+    with col_btn:
+        refine_btn = st.button("🔄 执行修改")
+        
+    if refine_btn and user_feedback:
+        with st.spinner("架构师正在调整图纸..."):
+            # 手动调用 Refiner Node
+            state["user_feedback_on_outline"] = user_feedback
+            update = outline_refiner_node(state)
+            state.update(update) # 更新大纲
+            state["loop_count"] = state.get("loop_count", 0) + 1 # 记录版本
+            st.success("大纲已更新！")
+            st.rerun()
 
-    if st.button("✅ 确认大纲，开始采编与撰写", type="primary"):
+    st.divider()
+
+    # 4. 确认定稿按钮
+    st.write("👇 确认大纲无误后，点击下方按钮开始写作")
+    if st.button("✅ 锁定大纲，开始采编与撰写", type="primary", use_container_width=True):
         run_drafting_loop()
 
 

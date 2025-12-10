@@ -77,14 +77,21 @@ class WriterState(TypedDict):
 # === [新增] DeepSeek Newsroom 专用状态 ===
 class NewsroomState(TypedDict):
     # --- 身份标识 ---
-    project_id: str         # [新增] 数据库中的项目ID，用于区分新建还是更新
+    project_id: str
     
     # === [新增] 搜索开关 ===
     enable_web_search: bool 
 
     # --- 静态缓存核心 ---
-    full_content: str       # 原始素材（用于 Context Caching）
-    user_requirement: str   # 用户原始需求
+    full_content: str       # 原始素材
+
+    # === [修改] 结构化需求替代原有的 user_requirement (保留该字段做兼容，但主要用下面的) ===
+    user_requirement: str   # 汇总后的需求字符串（供通用 Prompt 使用）
+    
+    # [新增] 细分配置
+    style_tone: str         # 语调/身份 (如：深度技术、幽默科普)
+    article_length: str     # 篇幅 (如：短讯、长文)
+    must_haves: str         # 必须包含的要素
 
     # --- 阶段 1: 策划 ---
     generated_angles: List[dict]  # AI 生成的切入角度
@@ -92,6 +99,9 @@ class NewsroomState(TypedDict):
 
     # --- 阶段 2: 架构 ---
     outline: List[dict]           # 结构化大纲
+    
+    # [新增] 大纲修改反馈
+    user_feedback_on_outline: str # 用户对大纲的修改意见
 
     # --- 阶段 3: 采编与撰写 (循环) ---
     current_section_index: int

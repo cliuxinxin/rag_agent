@@ -8,7 +8,8 @@ from src.prompts import (
     get_internal_researcher_prompt,
     get_section_drafter_prompt,
     get_editor_reviewer_prompt,
-    get_final_polisher_prompt
+    get_final_polisher_prompt,
+    get_outline_refiner_prompt # [新增]
 )
 from src.state import NewsroomState
 # [新增]
@@ -46,11 +47,15 @@ def angle_generator_node(state: NewsroomState) -> dict:
     """首席策划：生成切入角度 (只负责生成)"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     # [修改] 直接从 State 获取搜索结果，不再自己搜
     search_context = state.get("macro_search_context", "")
 
     llm = get_llm()
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     
     # 传入 prompt
     user_msg = HumanMessage(content=get_angle_generator_prompt(search_context))
@@ -74,11 +79,15 @@ def outline_architect_node(state: NewsroomState) -> dict:
     """架构师：生成大纲"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     angle_data = state.get("selected_angle", {})
     angle_str = f"{angle_data.get('title')} - {angle_data.get('desc')}"
 
     llm = get_llm()
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     user_msg = HumanMessage(content=get_outline_architect_prompt(angle_str))
 
     response = llm.invoke([base_sys, user_msg]).content
@@ -97,6 +106,9 @@ def internal_researcher_node(state: NewsroomState) -> dict:
     """内部探员：在文档中查证事实 (支持微观搜索)"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     outline = state["outline"]
     idx = state["current_section_index"]
     enable_search = state.get("enable_web_search", False) # 获取开关
@@ -124,7 +136,8 @@ def internal_researcher_node(state: NewsroomState) -> dict:
         else:
             logs.append("⚠️ 网络搜索无结果，使用本地文档")
 
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     # [修改] 传入 search_context
     user_msg = HumanMessage(content=get_internal_researcher_prompt(
         section['title'], 
@@ -141,6 +154,9 @@ def section_drafter_node(state: NewsroomState) -> dict:
     """撰稿人：基于笔记写一章"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     outline = state["outline"]
     idx = state["current_section_index"]
     notes = state.get("research_cache", "")
@@ -151,7 +167,8 @@ def section_drafter_node(state: NewsroomState) -> dict:
     section = outline[idx]
 
     llm = get_llm()
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     user_msg = HumanMessage(content=get_section_drafter_prompt(section['title'], notes, prev_context))
 
     content = llm.invoke([base_sys, user_msg]).content
@@ -179,14 +196,48 @@ def dispatcher_node(state: NewsroomState) -> dict:
 
 
 # === 3. 审阅与润色 (Review & Polish) ===
+# 在文件末尾或 outline_architect_node 附近添加
+
+def outline_refiner_node(state: NewsroomState) -> dict:
+    """架构师：根据用户反馈修整大纲"""
+    current_outline = state["outline"]
+    feedback = state["user_feedback_on_outline"]
+    
+    # 将现有大纲转为字符串供 LLM 阅读
+    outline_str = json.dumps(current_outline, ensure_ascii=False, indent=2)
+    
+    llm = get_llm()
+    
+    # 这里不需要全文 Context，只需要大纲和意见即可，省 token
+    user_msg = HumanMessage(content=get_outline_refiner_prompt(outline_str, feedback))
+    
+    response = llm.invoke([user_msg]).content
+    
+    try:
+        clean_json = response.replace("```json", "").replace("```", "").strip()
+        new_outline = json.loads(clean_json)
+    except Exception:
+        # 如果解析失败，保留原大纲并在日志里报错（或者返回原大纲）
+        new_outline = current_outline
+        
+    return {
+        "outline": new_outline, 
+        "user_feedback_on_outline": "", #不仅清空，还可以在 run_logs 里加一条
+        "run_logs": ["✅ 大纲已根据您的意见完成修改。"]
+    }
+
 def reviewer_node(state: NewsroomState) -> dict:
     """主编：审阅"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     full_draft = state["full_draft"]
 
     llm = get_llm()
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     user_msg = HumanMessage(content=get_editor_reviewer_prompt(full_draft))
 
     critique = llm.invoke([base_sys, user_msg]).content
@@ -197,11 +248,15 @@ def polisher_node(state: NewsroomState) -> dict:
     """润色师：定稿"""
     full_text = state["full_content"]
     req = state["user_requirement"]
+    # [新增] 获取样式
+    style = state.get("style_tone", "标准风格")
+    length = state.get("article_length", "标准篇幅")
     full_draft = state["full_draft"]
     critique = state["critique_notes"]
 
     llm = get_llm()
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req))
+    # [修改] 传入 style 和 length
+    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
     user_msg = HumanMessage(content=get_final_polisher_prompt(full_draft, critique))
 
     final_article = llm.invoke([base_sys, user_msg]).content

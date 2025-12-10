@@ -112,11 +112,14 @@ def get_qa_writer_prompt(doc_title: str, user_goal: str, history_text: str) -> s
 # =========================================================
 
 
-def get_newsroom_base_prompt(content: str, requirement: str) -> str:
+def get_newsroom_base_prompt(content: str, requirement: str, style: str = "", length: str = "") -> str:
     """
-    核心缓存块：包含文档全文和用户需求。
-    所有 Newsroom 的 Agent 必须以此为开头，以命中缓存。
+    核心缓存块。
     """
+    # 构造更强的 System Instruction
+    style_instr = f"- **写作风格/语调**: {style}" if style else ""
+    length_instr = f"- **预估篇幅**: {length}" if length else ""
+
     return f"""
 <DOCUMENT_CACHE_START>
 {content}
@@ -124,10 +127,13 @@ def get_newsroom_base_prompt(content: str, requirement: str) -> str:
 
 <USER_REQUIREMENT>
 {requirement}
+{style_instr}
+{length_instr}
 </USER_REQUIREMENT>
 
 你现在的身份是【DeepSeek 新闻工作室】的成员。
-所有的工作必须严格基于 <DOCUMENT_CACHE> 中的内容，严禁编造事实。
+所有的工作必须严格基于 <DOCUMENT_CACHE> 中的内容。
+请时刻牢记用户的【写作风格】和【篇幅要求】。
 """
 
 
@@ -250,4 +256,27 @@ def get_final_polisher_prompt(full_draft: str, critique_notes: str) -> str:
     
     请作为金牌润色师，根据意见对初稿进行**全文重写或精修**。
     Output最终成稿（Markdown format）。标题要足够吸引人。
+    """
+
+
+def get_outline_refiner_prompt(current_outline_str: str, feedback: str) -> str:
+    return f"""
+    【任务：大纲修订】
+    
+    【当前大纲】
+    {current_outline_str}
+    
+    【用户修改意见】
+    "{feedback}"
+    
+    请作为架构师，根据用户的意见对大纲进行调整。
+    
+    要求：
+    1. 严格遵循用户的修改指令（如删除某章、增加某章、合并章节）。
+    2. 如果用户只是模糊建议（如"再深入一点"），请智能细化子章节。
+    3. 保持 JSON 格式输出，结构与之前一致：
+    [
+        {{"title": "...", "gist": "...", "key_facts": "..."}},
+        ...
+    ]
     """
