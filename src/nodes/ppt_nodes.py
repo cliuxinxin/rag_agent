@@ -4,8 +4,8 @@ from langchain_core.messages import HumanMessage
 from src.nodes.common import get_llm
 from src.prompts import get_ppt_planner_prompt, get_ppt_writer_prompt
 from src.state import PPTState
-# === 修改这里 ===
-from src.ppt_renderer import generate_ppt_file
+# 引用新函数
+from src.ppt_renderer import generate_ppt_binary 
 
 def ppt_planner_node(state: PPTState) -> dict:
     """策划师：生成大纲"""
@@ -54,20 +54,16 @@ def ppt_writer_node(state: PPTState) -> dict:
     }
 
 def ppt_renderer_node(state: PPTState) -> dict:
-    """渲染工：生成文件"""
+    """渲染工：生成二进制流"""
     slides = state["final_ppt_content"]
-    title = state.get("doc_title", "DeepSeek_Generated")
     
     try:
-        # 清理非法字符作为文件名
-        safe_title = "".join([c for c in title if c.isalnum() or c in (' ','-','_')]).strip()
-        # 确保文件名不为空
-        if not safe_title: safe_title = "presentation"
+        # 直接获取二进制数据
+        ppt_bytes = generate_ppt_binary(slides)
         
-        file_path = generate_ppt_file(slides, filename=f"{safe_title}.pptx")
         return {
-            "ppt_file_path": file_path,
-            "run_logs": [f"✅ PPT 文件生成完毕: {file_path}"]
+            "ppt_binary": ppt_bytes, # 存入 State
+            "run_logs": ["✅ PPT 渲染完成 (内存生成)"]
         }
     except Exception as e:
         return {"run_logs": [f"❌ 渲染失败: {e}"]}

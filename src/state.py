@@ -130,5 +130,10 @@ class PPTState(TypedDict):
     slides_count: int
     ppt_outline: list # 策划阶段产生的中间态
     final_ppt_content: list # 最终用于渲染的 JSON
-    ppt_file_path: str
+    
+    # === 修改这里 ===
+    # 之前是 ppt_file_path: str
+    ppt_binary: bytes 
+    # ================
+    
     run_logs: Annotated[List[str], add_strings]
