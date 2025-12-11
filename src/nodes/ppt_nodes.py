@@ -4,7 +4,8 @@ from langchain_core.messages import HumanMessage
 from src.nodes.common import get_llm
 from src.prompts import get_ppt_planner_prompt, get_ppt_writer_prompt
 from src.state import PPTState
-from src.utils.ppt_renderer import generate_ppt_file
+# === 修改这里 ===
+from src.ppt_renderer import generate_ppt_file
 
 def ppt_planner_node(state: PPTState) -> dict:
     """策划师：生成大纲"""
@@ -60,6 +61,9 @@ def ppt_renderer_node(state: PPTState) -> dict:
     try:
         # 清理非法字符作为文件名
         safe_title = "".join([c for c in title if c.isalnum() or c in (' ','-','_')]).strip()
+        # 确保文件名不为空
+        if not safe_title: safe_title = "presentation"
+        
         file_path = generate_ppt_file(slides, filename=f"{safe_title}.pptx")
         return {
             "ppt_file_path": file_path,

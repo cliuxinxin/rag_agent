@@ -296,11 +296,11 @@ PPT 的目标是清晰、有逻辑地向听众汇报文档核心内容。
 请输出 JSON 格式，包含一个列表 `slides`，每一项包含：
 1. `id`: 页码
 2. `type`: 页面类型，只能从以下选择一个:
-   - "cover" (封面: 只有标题和副标题)
-   - "section" (章节页: 只有大章节标题)
-   - "content" (正文页: 标题 + 3-5个要点)
+   - "cover" (封面)
+   - "section" (章节页)
+   - "content" (正文页)
 3. `title`: 页面标题
-4. `key_points`: (仅 content 类型需要) 一个简短的要点列表，用于说明本页讲什么。
+4. `key_points`: (仅 content 类型需要) 一个简短的要点列表。
 
 Output JSON format only.
 """
@@ -318,19 +318,17 @@ def get_ppt_writer_prompt(content: str, outline_str: str) -> str:
 {outline_str}
 
 【要求】
-请输出完整的 JSON 数据，结构如下：
+请输出完整的 JSON 数据 (List of Objects)，结构如下：
 [
     {{
         "type": "cover" | "section" | "content",
         "title": "页面标题",
-        "subtitle": "副标题 (仅 cover 类型需要)",
-        "bullets": ["要点1", "要点2", "要点3..."], (仅 content 类型需要，请精简，每点不超过 20 字)
-        "speaker_notes": "演讲者备注 (逐字稿，口语化，每页约 100-200 字)"
+        "subtitle": "副标题 (仅 cover 需要)",
+        "bullets": ["要点1", "要点2"], (仅 content 需要)
+        "speaker_notes": "演讲者备注 (逐字稿)"
     }},
     ...
 ]
 
-注意：
-1. "bullets" 必须是数组。
-2. 确保 JSON 格式合法。
+确保 JSON 格式合法。
 """

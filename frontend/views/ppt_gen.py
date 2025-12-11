@@ -2,7 +2,7 @@
 import streamlit as st
 import os
 from src.graphs.ppt_graph import ppt_graph
-from src.utils import load_file # 复用现有的 loader
+# 移除了 utils 导入，因为我们不再使用它
 
 def render():
     st.header("📊 智能 PPT 生成器")
