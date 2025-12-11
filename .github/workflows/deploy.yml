@@ -18,8 +18,10 @@ jobs:
             # 停止旧容器 (防止端口占用冲突)
             cd /home/${{ secrets.USERNAME }}/rag_agent # ⚠️注意：请确认你的项目路径是否正确
             
-            # 这一步很重要：拉取代码并更新
-            git pull origin main
+            # 1. 放弃所有本地未提交的修改
+            git reset --hard origin/main
+            # 2. 确保拉取到最新代码
+            git pull origin main --force
             
             # 重新构建并启动
             docker-compose up -d --build
