@@ -13,6 +13,8 @@ from src.db import (
     get_writing_project,
     delete_project # [新增引用]
 )
+# [新增/移动] 将此行移到顶部，以便在 render_step_setup 中使用
+from src.nodes.write_nodes_v2 import outline_architect_node, outline_refiner_node
 
 def load_file_content(uploaded_file) -> str:
     """
@@ -129,6 +131,13 @@ def render_step_setup():
         help="开启后，策划阶段将搜索行业背景，采编阶段将自动核实数据。"
     )
 
+    # === [修改 1] 添加一键成文开关 ===
+    auto_mode = st.checkbox(
+        "⚡ 一键成文 (自动选角度2 + 自动写作)",
+        value=False,
+        help="选中后，将自动选择第二个切入角度，跳过大纲确认，直接生成最终文章。"
+    )
+
     if st.button("🚀 启动策划会", type="primary"):
         full_content = ""
         if uploaded_file:
@@ -165,6 +174,8 @@ def render_step_setup():
                 "enable_web_search": enable_search,
                 "generated_angles": [],
                 "macro_search_context": "", # 初始化
+                # === [修改 2] 初始状态构造增加 auto_mode ===
+                "auto_mode": auto_mode, # [新增] 保存开关状态
                 "run_logs": [] # 初始化
             }
 
@@ -186,9 +197,40 @@ def render_step_setup():
                         elif node_name == "AngleGen":
                             status_box.write("✅ 角度构思完成，正在生成大纲...")
 
-                status_box.update(label="策划完成！", state="complete", expanded=False)
-                st.session_state.newsroom_state = initial_state
-                st.rerun()
+                # === [修改 3] 核心逻辑分支 ===
+                
+                # 情况 A: 开启了一键成文
+                if initial_state.get("auto_mode"):
+                    status_box.write("⚡ **一键成文模式启动**：正在自动选择角度...")
+                    
+                    # 1. 自动选择角度 (默认选第2个，索引为1；如果不够则选第1个)
+                    angles = initial_state.get("generated_angles", [])
+                    if angles:
+                        selected_idx = 1 if len(angles) > 1 else 0
+                        initial_state["selected_angle"] = angles[selected_idx]
+                        status_box.write(f"✅ 已选择角度：{angles[selected_idx]['title']}")
+                    
+                    # 2. 自动生成大纲 (手动调用节点逻辑)
+                    status_box.write("🏗️ 正在跳过交互，直接构建大纲...")
+                    outline_update = outline_architect_node(initial_state)
+                    initial_state.update(outline_update)
+                    
+                    # 3. 更新 Session State 以便后续函数读取
+                    st.session_state.newsroom_state = initial_state
+                    
+                    # 4. 直接调用写作循环 (Drafting Loop)
+                    # 注意：run_drafting_loop 会创建它自己的 status 容器，这没问题，会堆叠显示
+                    status_box.update(label="策划完成，进入自动写作...", state="complete", expanded=False)
+                    run_drafting_loop() 
+                    
+                    # 5. 写作完成后刷新页面，展示最终结果
+                    st.rerun()
+
+                # 情况 B: 普通模式 (原有逻辑)
+                else:
+                    status_box.update(label="策划完成！", state="complete", expanded=False)
+                    st.session_state.newsroom_state = initial_state
+                    st.rerun()
                 
             except Exception as e:
                 st.error(f"出错: {e}")
@@ -213,8 +255,7 @@ def render_step_angle_selection():
                     st.rerun()
 
 
-# 引入 outline_refiner_node
-from src.nodes.write_nodes_v2 import outline_architect_node, outline_refiner_node 
+ 
 
 def render_step_execution():
     st.subheader("🏗️ 第三步：架构与大纲修订")
