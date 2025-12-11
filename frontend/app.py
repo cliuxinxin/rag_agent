@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # 导入视图
-from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2
+from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen # <--- 新增
 from src.db import init_db
 
 load_dotenv()
@@ -68,7 +68,7 @@ def main():
             # 这里的顺序对应下面的 if-else
             page = st.radio(
                 "导航",
-                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "📰 新闻工作室 (New)", "⚙️ 知识库"],
+                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "📰 新闻工作室 (New)", "📊 PPT 生成器", "⚙️ 知识库"], # <--- 新增选项
                 index=3,
             )
 
@@ -80,6 +80,8 @@ def main():
             deep_qa.render()
         elif page == "📰 新闻工作室 (New)":
             deep_write_v2.render()
+        elif page == "📊 PPT 生成器": # <--- 新增分支
+            ppt_gen.render()
         else:
             kb_management.render()
             

@@ -122,3 +122,13 @@ class NewsroomState(TypedDict):
     macro_search_context: str 
     # 用于实时传回 Log (例如: "正在搜索 xxx...")，使用 add_strings 自动累加
     run_logs: Annotated[List[str], add_strings]
+
+# === [新增] PPT 生成状态 ===
+class PPTState(TypedDict):
+    full_content: str
+    doc_title: str
+    slides_count: int
+    ppt_outline: list # 策划阶段产生的中间态
+    final_ppt_content: list # 最终用于渲染的 JSON
+    ppt_file_path: str
+    run_logs: Annotated[List[str], add_strings]
