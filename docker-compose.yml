@@ -5,7 +5,7 @@ services:
     build: .
     container_name: deepseek_rag_pro
     ports:
-      - "8501:8501"
+      - "8000:8501"
     volumes:
       # 持久化知识库数据
       - ./storage:/app/storage
