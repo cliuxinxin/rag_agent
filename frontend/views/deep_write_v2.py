@@ -341,6 +341,28 @@ def run_drafting_loop():
                 elif node_name == "Polisher":
                     status_box.write("✨ **润色师**: 正在根据意见进行最终打磨...")
 
+        # === [新增] 自动归档逻辑 ===
+        if state.get("auto_mode"):
+            status_box.write("💾 **自动归档**: 正在保存项目到数据库...")
+            try:
+                # 1. 创建新项目
+                pid = create_writing_project(
+                    title=state["selected_angle"].get("title", "未命名项目"),
+                    requirements=state["user_requirement"],
+                    source_type="newsroom_v2",
+                    source_data=json.dumps(state["selected_angle"], ensure_ascii=False),
+                )
+                # 2. 保存大纲和草稿
+                update_project_outline(pid, state["outline"], research_report=state.get("critique_notes", ""))
+                update_project_draft(pid, state.get("final_article", ""))
+                
+                # 3. 回写 ID
+                state["project_id"] = pid
+                status_box.write(f"✅ 项目已自动归档 (ID: {pid})")
+            except Exception as save_e:
+                status_box.write(f"❌ 自动归档失败: {save_e}")
+        # ==========================
+
         status_box.update(label="✅ 所有工作已完成！", state="complete", expanded=False)
         st.rerun()
 
