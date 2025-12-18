@@ -3,6 +3,11 @@ import streamlit as st
 from src.graphs.deep_qa_graph import deep_qa_graph as qa_graph
 from src.storage import load_kbs, list_kbs
 from langchain_core.messages import HumanMessage
+# === [修改] 适配 Langfuse v3 ===
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+except ImportError:
+    LangfuseCallbackHandler = None
 
 def render():
     st.header("❓ 深度追问")
@@ -93,7 +98,20 @@ def render():
         # 运行图
         with st.spinner("AI 正在深度分析..."):
             final_answer = ""
-            for step in qa_graph.stream(initial_state):
+            # === [修改] 注入 Callback ===
+            run_config = {}
+            if LangfuseCallbackHandler:
+                handler = LangfuseCallbackHandler()
+                project_title = st.session_state.qa_project.get('title', 'default_qa')
+                
+                run_config["callbacks"] = [handler]
+                # v3 使用 metadata 传递
+                run_config["metadata"] = {
+                    "langfuse_session_id": f"qa_{project_title}",
+                    "langfuse_tags": ["deep-qa"]
+                }
+            
+            for step in qa_graph.stream(initial_state, config=run_config):
                 for node_name, update in step.items():
                     if "messages" in update and update["messages"]:
                         final_answer = update["messages"][-1].content
@@ -146,7 +164,19 @@ def render():
             # 运行图
             with st.spinner("AI 正在生成总结报告..."):
                 final_answer = ""
-                for step in qa_graph.stream(initial_state):
+                # === [修改] 注入 Callback ===
+                run_config_report = {}
+                if LangfuseCallbackHandler:
+                    handler = LangfuseCallbackHandler()
+                    project_title = st.session_state.qa_project.get('title', 'default_qa')
+                    
+                    run_config_report["callbacks"] = [handler]
+                    run_config_report["metadata"] = {
+                        "langfuse_session_id": f"qa_{project_title}",
+                        "langfuse_tags": ["deep-qa-report"]
+                    }
+                
+                for step in qa_graph.stream(initial_state, config=run_config_report):
                     for node_name, update in step.items():
                         if "messages" in update and update["messages"]:
                             final_answer = update["messages"][-1].content

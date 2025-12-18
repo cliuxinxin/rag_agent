@@ -10,6 +10,11 @@ from src.graphs.deep_read_graph import deep_read_graph
 
 from src.db import init_db, create_session, save_report, get_all_reports, get_report_content, delete_report
 from src.nodes.common import get_llm
+# === [修改] 适配 Langfuse v3 ===
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+except ImportError:
+    LangfuseCallbackHandler = None
 
 # 初始化数据库
 init_db()
@@ -123,8 +128,16 @@ def render():
         final_report = ""
         
         try:
-            # === 关键：调用 deep_read_graph ===
-            for step in deep_read_graph.stream(st.session_state.deep_input, config={"recursion_limit": 50}):
+            # === [修改] 注入 Callback ===
+            run_config = {"recursion_limit": 50}
+            if LangfuseCallbackHandler:
+                handler = LangfuseCallbackHandler()
+                run_config["callbacks"] = [handler]
+                run_config["metadata"] = {
+                    "langfuse_tags": ["deep-read"]
+                }
+
+            for step in deep_read_graph.stream(st.session_state.deep_input, config=run_config):
                 for node, update in step.items():
                     if node == "Planner":
                         question = update.get("current_question")

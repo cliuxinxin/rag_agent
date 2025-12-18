@@ -5,6 +5,11 @@ import streamlit as st
 import streamlit.components.v1 as comp
 from langchain_community.document_loaders import PyPDFLoader
 from src.graphs.write_graph_v2 import planning_graph, drafting_graph
+# === [修改] 适配 Langfuse v3 ===
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+except ImportError:
+    LangfuseCallbackHandler = None
 from src.db import (
     create_writing_project,
     update_project_draft,
@@ -109,7 +114,7 @@ def render_step_setup():
     with c1:
         style_tone = st.selectbox(
             "🎭 身份与语调",
-            ["客观中立 (分析师)", "深度专业 (技术专家)", "犀利独到 (资深主编)", "通俗易懂 (科普博主)", "正式公文 (报告风格)"],
+            ["犀利独到 (资深主编)","客观中立 (分析师)", "深度专业 (技术专家)","通俗易懂 (科普博主)", "正式公文 (报告风格)"],
             index=0
         )
     with c2:
@@ -180,8 +185,16 @@ def render_step_setup():
             }
 
             try:
-                # [关键修改] 使用 .stream() 而不是 hidden loop
-                for step in planning_graph.stream(initial_state):
+                # === [修改] Planning Callback ===
+                plan_config = {}
+                if LangfuseCallbackHandler:
+                    handler = LangfuseCallbackHandler()
+                    plan_config["callbacks"] = [handler]
+                    plan_config["metadata"] = {
+                        "langfuse_tags": ["newsroom-planning"]
+                    }
+                
+                for step in planning_graph.stream(initial_state, config=plan_config):
                     for node_name, update in step.items():
                         # 更新状态
                         initial_state.update(update)
@@ -315,7 +328,20 @@ def run_drafting_loop():
     total_sections = len(state["outline"])
 
     try:
-        for step in drafting_graph.stream(state, config={"recursion_limit": 50}):
+        # === [修改] Drafting Callback ===
+        draft_config = {"recursion_limit": 50}
+        
+        if LangfuseCallbackHandler:
+            handler = LangfuseCallbackHandler()
+            pid = state.get("project_id", "temp_drafting")
+            
+            draft_config["callbacks"] = [handler]
+            draft_config["metadata"] = {
+                "langfuse_session_id": str(pid),
+                "langfuse_tags": ["newsroom-drafting"]
+            }
+        
+        for step in drafting_graph.stream(state, config=draft_config):
             for node_name, update in step.items():
                 state.update(update)
                 

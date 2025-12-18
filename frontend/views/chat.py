@@ -12,6 +12,11 @@ from src.storage import load_kbs, list_kbs # 补全 list_kbs
 from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
 from src.nodes.common import get_llm # 确保引用路径正确
 from langchain_core.messages import HumanMessage, SystemMessage # 补全 SystemMessage
+# === [修改] 适配 Langfuse v3 ===
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+except ImportError:
+    LangfuseCallbackHandler = None
 
 # 初始化数据库
 init_db()
@@ -175,7 +180,24 @@ def render():
             final_answer = ""
             
             try:
+                # === [修改] 配置 Graph 运行时参数 ===
                 graph_config = {"recursion_limit": 50}
+                
+                # 只有当模块加载成功且有 session_id 时才配置
+                if LangfuseCallbackHandler and st.session_state.current_session_id:
+                    # 1. 初始化 Handler (无参数)
+                    session_handler = LangfuseCallbackHandler()
+                    
+                    # 2. 注入 callbacks
+                    graph_config["callbacks"] = [session_handler]
+                    
+                    # 3. [v3 重点] 通过 metadata 传递 session_id
+                    graph_config["metadata"] = {
+                        "langfuse_session_id": st.session_state.current_session_id,
+                        "langfuse_user_id": "user_admin" 
+                    }
+                
+                # 3. 传入 config
                 for step in graph.stream(initial_state, config=graph_config):
                     for node_name, update in step.items():
                         if node_name == "Supervisor":

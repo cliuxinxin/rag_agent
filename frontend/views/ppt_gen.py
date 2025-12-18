@@ -2,7 +2,12 @@
 import streamlit as st
 import os
 from src.graphs.ppt_graph import ppt_graph
-from frontend.views.deep_read import load_file_content 
+from frontend.views.deep_read import load_file_content
+# === [修改] 适配 Langfuse v3 ===
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+except ImportError:
+    LangfuseCallbackHandler = None 
 
 def render():
     st.header("📊 智能 PPT 生成器 (内存模式)")
@@ -60,7 +65,16 @@ def render():
         with st.status("正在生成 PPT...", expanded=True) as status_box:
             final_state = None
             try:
-                for step in ppt_graph.stream(initial_state):
+                # === [修改] PPT Callback ===
+                ppt_config = {}
+                if LangfuseCallbackHandler:
+                    handler = LangfuseCallbackHandler()
+                    ppt_config["callbacks"] = [handler]
+                    ppt_config["metadata"] = {
+                        "langfuse_tags": ["ppt-gen"]
+                    }
+                
+                for step in ppt_graph.stream(initial_state, config=ppt_config):
                     for node_name, update in step.items():
                         if "run_logs" in update:
                             for log in update["run_logs"]:
