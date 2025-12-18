@@ -154,8 +154,8 @@ def render_step_setup():
             st.error("文档内容提取为空，请检查文件是否包含可复制的文本。")
             return
 
-        # 长度保护（10 万字符）
-        MAX_CHARS = 100000
+        # 长度保护（15 万字符）
+        MAX_CHARS = 150000
         if len(full_content) > MAX_CHARS:
             st.warning(f"⚠️ 文档过长 ({len(full_content)} 字)，已截取前 {MAX_CHARS} 字。")
             full_content = full_content[:MAX_CHARS] + "\n...(内容已截断)..."
