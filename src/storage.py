@@ -308,3 +308,76 @@ def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -
 
     final_count = vectorstore.index.ntotal if vectorstore else current_count
     return final_count, total_docs
+
+# [新增] 搜索功能
+def search_kb_chunks(kb_name: str, keyword: str, limit: int = 20) -> List[Dict]:
+    """
+    在知识库的 JSON 源文件中搜索关键词
+    """
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    results = []
+    
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                for i, item in enumerate(data):
+                    content = item.get("page_content", "")
+                    # 简单的大小写不敏感搜索
+                    if keyword.lower() in content.lower():
+                        results.append({
+                            "id": i,  # 记录原始索引
+                            "content": content,
+                            "metadata": item.get("metadata", {})
+                        })
+                        if len(results) >= limit:
+                            break
+            except Exception as e:
+                logger.error(f"搜索知识库 {kb_name} 出错: {e}")
+    return results
+
+# [新增] 获取特定 ID 的向量
+def get_chunk_vector(kb_name: str, chunk_index: int) -> Dict:
+    """
+    尝试从 FAISS 索引中读取指定 ID 的向量数据
+    """
+    faiss_path = STORAGE_DIR / f"{kb_name}_faiss" / "index.faiss"
+    result = {
+        "exists": False,
+        "vector": [],
+        "dimension": 0,
+        "msg": ""
+    }
+    
+    if not faiss_path.exists():
+        result["msg"] = "索引文件不存在"
+        return result
+        
+    try:
+        # 读取索引
+        index = faiss.read_index(str(faiss_path))
+        
+        # 检查 ID 是否越界
+        if chunk_index < 0 or chunk_index >= index.ntotal:
+            result["msg"] = f"索引越界 (请求 ID: {chunk_index}, 总数: {index.ntotal})"
+            return result
+            
+        # 重构向量 (reconstruct)
+        # 注意：某些 FAISS 索引类型不支持 reconstruct，但 IndexFlatL2 (默认) 支持
+        try:
+            vec = index.reconstruct(chunk_index)
+            # 转换为普通列表以便 JSON 序列化，并保留前 10 位用于预览
+            vec_list = vec.tolist()
+            result["exists"] = True
+            result["vector"] = vec_list
+            result["dimension"] = len(vec_list)
+            result["msg"] = "Success"
+            logger.debug(f"成功读取知识库 {kb_name} 片段 #{chunk_index} 的向量，维度: {len(vec_list)}")
+        except RuntimeError as e:
+            result["msg"] = f"该索引类型不支持直接重构向量 (reconstruct): {e}"
+            
+    except Exception as e:
+        result["msg"] = f"读取错误: {e}"
+        logger.error(f"读取知识库 {kb_name} 片段 #{chunk_index} 的向量时出错: {e}", exc_info=True)
+        
+    return result
