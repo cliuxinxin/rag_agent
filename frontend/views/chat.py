@@ -12,6 +12,9 @@ from src.storage import load_kbs, list_kbs # 补全 list_kbs
 from src.db import init_db, create_session, get_all_sessions, get_messages, add_message, delete_session, update_session_title
 from src.nodes.common import get_llm # 确保引用路径正确
 from langchain_core.messages import HumanMessage, SystemMessage # 补全 SystemMessage
+from src.logger import get_logger
+
+logger = get_logger("View_Chat")
 
 # 初始化数据库
 init_db()
@@ -136,12 +139,21 @@ def render():
         st.session_state.next_query = ""
     
     if final_query:
+        logger.info(f" >>> 收到用户输入: {final_query} <<<")
+        
         if not st.session_state.selected_kbs:
+            logger.warning("用户未选择知识库，操作中止")
             st.error("请选择知识库！")
             return
         
         with st.spinner("加载索引..."):
-            source_documents, vector_store = load_kbs(st.session_state.selected_kbs)
+            try:
+                source_documents, vector_store = load_kbs(st.session_state.selected_kbs)
+                logger.info(f"知识库加载成功: {st.session_state.selected_kbs}")
+            except Exception as e:
+                logger.error(f"知识库加载失败: {e}", exc_info=True)
+                st.error("知识库加载出错")
+                return
         
         st.session_state.messages.append({"role": "user", "content": final_query})
         # 保存用户消息到数据库
@@ -175,9 +187,13 @@ def render():
             final_answer = ""
             
             try:
+                logger.info("开始执行 Graph Stream...")
                 graph_config = {"recursion_limit": 50}
                 for step in graph.stream(initial_state, config=graph_config):
                     for node_name, update in step.items():
+                        # [Log] 记录流式步骤
+                        logger.debug(f"Graph 更新 - 节点: {node_name}")
+                        
                         if node_name == "Supervisor":
                             next_node = update.get("next")
                             query = update.get("current_search_query")
@@ -195,6 +211,7 @@ def render():
                             msgs = update.get("messages", [])
                             if msgs:
                                 final_answer = msgs[-1].content
+                                logger.info("获得 Answerer 最终回复")
                 
                 status_container.update(label="回答完成", state="complete", expanded=False)
                 
@@ -214,7 +231,10 @@ def render():
                     
                     # 渲染当前回答 (使用优化后的格式化函数)
                     format_display_message(final_answer)
+                else:
+                    logger.warning("Graph 执行完成但没有生成 final_answer")
             
             except Exception as e:
                 status_container.update(label="Error", state="error")
+                logger.error(f"Graph 运行过程中发生崩溃: {e}", exc_info=True)
                 st.error(f"运行错误: {e}")

@@ -14,8 +14,19 @@ STORAGE_DIR = Path("storage")
 STORAGE_DIR.mkdir(exist_ok=True)
 DB_PATH = STORAGE_DIR / "chat_history.db"
 
+# 简单的防止单次运行中重复刷日志
+# 注意：Streamlit 重运行时会重置，但可以减少单次会话内的重复日志
+_DB_INITIALIZED = False
+
 def init_db():
     """初始化数据库表结构"""
+    global _DB_INITIALIZED
+    
+    # 简单的防止单次运行中重复刷日志
+    # 如果想彻底防止 Streamlit 刷新带来的日志，可以用 st.session_state 判断
+    if _DB_INITIALIZED:
+        return
+    
     logger.info(f"正在初始化数据库: {DB_PATH}")
     try:
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -88,6 +99,7 @@ def init_db():
         conn.commit()
         conn.close()
         logger.info("数据库初始化完成")
+        _DB_INITIALIZED = True
     except Exception as e:
         logger.error(f"数据库初始化失败: {e}", exc_info=True)
         raise e
