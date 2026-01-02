@@ -235,8 +235,8 @@ def render():
             if not raw_docs:
                 st.warning("没有内容可保存。")
                 return
-            chunks = split_documents(raw_docs, chunk_size=800)
-            st.info(f"已切分为 {len(chunks)} 个片段 (Chunk Size=800)")
+            chunks = split_documents(raw_docs, chunk_size=4000)
+            st.info(f"已切分为 {len(chunks)} 个片段 (Chunk Size=4000)")
             progress_bar = st.progress(0, text="初始化向量化...")
             try:
                 save_kb(target_kb_name, chunks, language=kb_language, progress_bar=progress_bar)
