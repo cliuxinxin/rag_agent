@@ -92,14 +92,38 @@ def generate_smart_title(query, answer):
         return query[:10] + "..."
 
 def format_display_message(content):
-    split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】"]
+    """
+    格式化显示消息：将正文直接显示，将引用/笔记放入折叠框
+    """
+    # 定义分隔符
+    split_markers = ["【🕵️‍♂️ 调查笔记】", "【📚 原始片段】", "【原始知识库片段】", "<details>"]
+    
     split_index = -1
+    # 找到第一个出现的分隔符位置
     for marker in split_markers:
         idx = content.find(marker)
         if idx != -1:
             if split_index == -1 or idx < split_index:
                 split_index = idx
-    # ... (此处省略具体实现，保持与原文件一致)
+    
+    if split_index != -1:
+        # 分割正文和附录
+        main_text = content[:split_index].strip()
+        references = content[split_index:].strip()
+        
+        # 1. 显示正文
+        if main_text:
+            st.markdown(main_text)
+        else:
+            # 极端情况：只有引用没有正文
+            st.markdown("（基于以下参考资料生成）")
+
+        # 2. 显示折叠的附录
+        with st.expander("📚 查看引用与思考过程 (Reference & Logs)", expanded=False):
+            st.markdown(references, unsafe_allow_html=True)
+    else:
+        # 没有分隔符，直接全部显示
+        st.markdown(content)
 
 def render():
     with st.sidebar:
@@ -216,21 +240,21 @@ def render():
                 status_container.update(label="回答完成", state="complete", expanded=False)
                 
                 if final_answer:
-                    # 保存到历史
+                    # 1. 先保存到 State 和 DB
                     st.session_state.messages.append({"role": "assistant", "content": final_answer})
-                    # 保存助手消息到数据库
                     if st.session_state.current_session_id:
                         add_message(st.session_state.current_session_id, "assistant", final_answer)
                     
-                    # 生成智能标题（仅在第一轮对话后）
+                    # 2. 【关键修改】立即渲染当前回答！确保用户先看到结果
+                    format_display_message(final_answer)
+                    
+                    # 3. 最后处理智能标题和刷新 (仅在第一轮对话后)
                     if st.session_state.current_session_id and len(st.session_state.messages) == 2:
+                        # 可以在这里加个 toast 提示，优化体验
+                        st.toast("正在生成会话标题...")
                         smart_title = generate_smart_title(final_query, final_answer)
                         update_session_title(st.session_state.current_session_id, smart_title)
-                        # 更新界面显示
-                        st.rerun()
-                    
-                    # 渲染当前回答 (使用优化后的格式化函数)
-                    format_display_message(final_answer)
+                        st.rerun()  # 此时再刷新，内容已经显示过了，刷新后也会从 History 再次加载
                 else:
                     logger.warning("Graph 执行完成但没有生成 final_answer")
             
