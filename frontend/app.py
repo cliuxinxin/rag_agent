@@ -13,6 +13,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 # 导入视图
 from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen # <--- 新增
 from src.db import init_db
+from src.logger import get_logger
+
+# 初始化日志
+logger = get_logger("Frontend_App")
 
 load_dotenv()
 st.set_page_config(page_title="DeepSeek RAG Pro", layout="wide", page_icon="🕵️‍♂️")
@@ -44,11 +48,18 @@ if "next_query" not in st.session_state:
     st.session_state.next_query = ""
 
 def main():
+    logger.info(">>> 应用启动: DeepSeek RAG Pro <<<")
+    
     try:
         with open('config.yaml') as file:
             config = yaml.load(file, Loader=SafeLoader)
     except FileNotFoundError:
+        logger.error("配置文件 config.yaml 未找到，应用无法启动。")
         st.error("⚠️ 找不到 config.yaml")
+        return
+    except Exception as e:
+        logger.exception("读取配置文件时发生未知错误")
+        st.error("配置文件读取出错")
         return
     
     authenticator = stauth.Authenticate(
@@ -62,6 +73,11 @@ def main():
     authenticator.login()
     
     if st.session_state["authentication_status"]:
+        # 记录登录成功 (注意不要记录密码)
+        if "user_logged_in_log" not in st.session_state:
+            logger.info(f"用户登录成功: {st.session_state['name']}")
+            st.session_state["user_logged_in_log"] = True
+            
         authenticator.logout(location='sidebar')
         with st.sidebar:
             st.title("DeepSeek RAG")
@@ -86,9 +102,14 @@ def main():
             kb_management.render()
             
     elif st.session_state["authentication_status"] is False:
+        logger.warning(f"用户登录失败: 用户名 {st.session_state.get('username')}")
         st.error('用户名或密码不正确')
     elif st.session_state["authentication_status"] is None:
         st.warning('请输入用户名和密码')
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"应用主循环发生崩溃: {e}", exc_info=True)
+        st.error("系统发生严重错误，请联系管理员查看日志。")

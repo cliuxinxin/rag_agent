@@ -1,13 +1,18 @@
 import os
 import requests
+from src.logger import get_logger
+
+logger = get_logger("Tool_Search")
 
 def tavily_search(query: str, max_results: int = 3) -> str:
     """
     执行 Tavily 搜索并返回格式化的文本结果。
     """
+    logger.info(f"执行搜索: '{query}'")
+    
     api_key = os.getenv("TAVILY_API_KEY")
     if not api_key:
-        print("⚠️ Warning: TAVILY_API_KEY not found in env.")
+        logger.warning("TAVILY_API_KEY 未设置，跳过搜索。")
         return ""
 
     url = "https://api.tavily.com/search"
@@ -36,9 +41,11 @@ def tavily_search(query: str, max_results: int = 3) -> str:
             content = res.get("content", "")
             url = res.get("url", "")
             results_text.append(f"【来源: {title}】\nURL: {url}\n内容: {content}\n")
-            
+        
+        result_count = len(data.get("results", []))
+        logger.info(f"搜索成功，找到 {result_count} 条结果")
         return "\n\n".join(results_text)
         
     except Exception as e:
-        print(f"❌ Tavily Search Error: {e}")
+        logger.error(f"Tavily 搜索失败: {e}", exc_info=True)
         return ""

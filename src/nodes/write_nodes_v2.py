@@ -14,6 +14,9 @@ from src.prompts import (
 from src.state import NewsroomState
 # [新增]
 from src.tools.search import tavily_search
+from src.logger import get_logger
+
+logger = get_logger("Node_WriteV2")
 
 
 # === 1. 策划阶段 (Planning) ===
@@ -21,10 +24,13 @@ from src.tools.search import tavily_search
 def macro_search_node(state: NewsroomState) -> dict:
     """策划阶段：宏观背景搜索"""
     req = state["user_requirement"]
+    logger.info(f"[MacroSearch] 开始处理需求: {req[:50]}...")
+    
     enable_search = state.get("enable_web_search", False)
     llm = get_llm()
     
     if not enable_search:
+        logger.info("[MacroSearch] 未开启联网，跳过背景搜索")
         return {"macro_search_context": "", "run_logs": ["⏭️ 未开启联网，跳过背景搜索..."]}
     
     # 1. 生成搜索词
@@ -37,6 +43,7 @@ def macro_search_node(state: NewsroomState) -> dict:
     
     # 3. 返回结果和日志
     context = raw_res if raw_res else ""
+    logger.info("[MacroSearch] 完成，背景搜索已获取。")
     return {
         "macro_search_context": context, 
         "run_logs": [log_msg, f"✅ 已找到相关背景资料 ({len(context)} chars)"]
@@ -77,6 +84,8 @@ def angle_generator_node(state: NewsroomState) -> dict:
 
 def outline_architect_node(state: NewsroomState) -> dict:
     """架构师：生成大纲"""
+    logger.info("[Architect] 正在生成大纲...")
+    
     full_text = state["full_content"]
     req = state["user_requirement"]
     # [新增] 获取样式
@@ -85,20 +94,25 @@ def outline_architect_node(state: NewsroomState) -> dict:
     angle_data = state.get("selected_angle", {})
     angle_str = f"{angle_data.get('title')} - {angle_data.get('desc')}"
 
-    llm = get_llm()
-    # [修改] 传入 style 和 length
-    base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
-    user_msg = HumanMessage(content=get_outline_architect_prompt(angle_str))
-
-    response = llm.invoke([base_sys, user_msg]).content
-
     try:
-        clean_json = response.replace("```json", "").replace("```", "").strip()
-        outline = json.loads(clean_json)
-    except Exception:
-        outline = [{"title": "生成失败", "gist": "请重试", "key_facts": ""}]
+        llm = get_llm()
+        # [修改] 传入 style 和 length
+        base_sys = SystemMessage(content=get_newsroom_base_prompt(full_text, req, style, length))
+        user_msg = HumanMessage(content=get_outline_architect_prompt(angle_str))
 
-    return {"outline": outline, "current_section_index": 0, "section_drafts": [], "full_draft": ""}
+        response = llm.invoke([base_sys, user_msg]).content
+
+        try:
+            clean_json = response.replace("```json", "").replace("```", "").strip()
+            outline = json.loads(clean_json)
+        except Exception:
+            outline = [{"title": "生成失败", "gist": "请重试", "key_facts": ""}]
+
+        logger.info("[Architect] 大纲生成成功")
+        return {"outline": outline, "current_section_index": 0, "section_drafts": [], "full_draft": ""}
+    except Exception as e:
+        logger.error(f"[Architect] 生成大纲失败: {e}", exc_info=True)
+        return {"outline": [{"title": "生成失败", "gist": "请重试", "key_facts": ""}], "current_section_index": 0, "section_drafts": [], "full_draft": ""}
 
 
 # === 2. 采编与撰写循环 (Drafting Loop) ===

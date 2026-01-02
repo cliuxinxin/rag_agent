@@ -3,6 +3,9 @@ import requests
 import concurrent.futures
 from typing import List, Optional
 from langchain_core.embeddings import Embeddings
+from src.logger import get_logger
+
+logger = get_logger("Embeddings")
 
 class HunyuanEmbeddings(Embeddings):
     """
@@ -35,9 +38,14 @@ class HunyuanEmbeddings(Embeddings):
             data = response.json()
             if "data" in data and len(data["data"]) > 0:
                 return data["data"][0]["embedding"]
+            
+            logger.warning(f"API 返回数据格式异常: {data}")
+            return None
+        except requests.exceptions.Timeout:
+            logger.warning(f"Embedding API 超时: {text[:20]}...")
             return None
         except Exception as e:
-            print(f"Embedding Error: {e}")
+            logger.error(f"Embedding API 调用错误: {e}")
             return None
 
     def embed_documents(self, texts: List[str], progress_callback=None) -> List[List[float]]:
@@ -45,6 +53,7 @@ class HunyuanEmbeddings(Embeddings):
         并发为文档列表生成向量。
         progress_callback: 可选的回调函数，用于更新 UI 进度条
         """
+        logger.info(f"开始并发向量化，文档数量: {len(texts)}")
         embeddings = [None] * len(texts)
         
         # 使用线程池并发处理
@@ -59,7 +68,7 @@ class HunyuanEmbeddings(Embeddings):
                     emb = future.result()
                     embeddings[index] = emb
                 except Exception as e:
-                    print(f"Worker Error at index {index}: {e}")
+                    logger.error(f"Worker Error at index {index}: {e}")
                     embeddings[index] = None
                 
                 # 更新进度

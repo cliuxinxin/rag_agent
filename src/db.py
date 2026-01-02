@@ -4,6 +4,10 @@ import json
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
+from src.logger import get_logger
+
+# 初始化日志
+logger = get_logger("Database")
 
 # === 路径配置 ===
 STORAGE_DIR = Path("storage")
@@ -12,86 +16,97 @@ DB_PATH = STORAGE_DIR / "chat_history.db"
 
 def init_db():
     """初始化数据库表结构"""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    
-    # 1. 会话表
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-
-    # 2. 消息表
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT,
-        role TEXT,
-        content TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )
-    ''')
-
-    # 3. 深度解读报告表
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS research_reports (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        source_name TEXT,
-        content TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-
-    # 4. 会话 Artifact 表
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS session_artifacts (
-        session_id TEXT PRIMARY KEY,
-        doc_title TEXT,
-        doc_content TEXT,
-        qa_pairs TEXT,
-        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )
-    ''')
-    
-    # 5. 深度写作项目表
-    # 注意：这里我们不需要 full_content 列，因为可以通过 source_data 恢复
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS writing_projects (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    logger.info(f"正在初始化数据库: {DB_PATH}")
+    try:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        c = conn.cursor()
         
-        -- 配置信息
-        requirements TEXT,     -- 用户需求
-        source_type TEXT,      -- "kb", "file", "text"
-        source_data TEXT,      -- 核心数据：KB名称列表(json) 或 文本内容
-        
-        -- 生成内容
-        research_report TEXT,  -- 调研报告
-        outline_data TEXT,     -- 大纲结构 (JSON)
-        full_draft TEXT        -- 最终草稿
-    )
-    ''')
+        # 1. 会话表
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
 
-    conn.commit()
-    conn.close()
+        # 2. 消息表
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            role TEXT,
+            content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )
+        ''')
+
+        # 3. 深度解读报告表
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS research_reports (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            source_name TEXT,
+            content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+        # 4. 会话 Artifact 表
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS session_artifacts (
+            session_id TEXT PRIMARY KEY,
+            doc_title TEXT,
+            doc_content TEXT,
+            qa_pairs TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )
+        ''')
+        
+        # 5. 深度写作项目表
+        # 注意：这里我们不需要 full_content 列，因为可以通过 source_data 恢复
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS writing_projects (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            
+            -- 配置信息
+            requirements TEXT,     -- 用户需求
+            source_type TEXT,      -- "kb", "file", "text"
+            source_data TEXT,      -- 核心数据：KB名称列表(json) 或 文本内容
+            
+            -- 生成内容
+            research_report TEXT,  -- 调研报告
+            outline_data TEXT,     -- 大纲结构 (JSON)
+            full_draft TEXT        -- 最终草稿
+        )
+        ''')
+
+        conn.commit()
+        conn.close()
+        logger.info("数据库初始化完成")
+    except Exception as e:
+        logger.error(f"数据库初始化失败: {e}", exc_info=True)
+        raise e
 
 # === 基础 Session 操作 ===
 
 def create_session(title: str = "新对话") -> str:
     session_id = str(uuid.uuid4())
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, title))
-    conn.commit()
-    conn.close()
-    return session_id
+    try:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        c = conn.cursor()
+        c.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, title))
+        conn.commit()
+        conn.close()
+        logger.info(f"创建新会话: {session_id} - {title}")
+        return session_id
+    except Exception as e:
+        logger.error(f"创建会话失败: {e}", exc_info=True)
+        return session_id
 
 def update_session_title(session_id: str, title: str):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
