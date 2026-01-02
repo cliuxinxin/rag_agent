@@ -1,8 +1,11 @@
 # frontend/views/kb_management.py
 import streamlit as st
-from src.storage import list_kbs, delete_kb, get_kb_details, save_kb
+from src.storage import list_kbs, delete_kb, get_kb_details, save_kb, resume_kb_embedding
 from src.utils import load_file, split_documents
 from langchain_core.documents import Document
+from src.logger import get_logger
+
+logger = get_logger("View_KBManagement")
 
 def render():
     st.header("📂 知识库管理")
@@ -31,13 +34,44 @@ def render():
                 st.subheader(f"🔍 检视: {selected_kb_to_view}")
                 
                 status = details["health_status"]
-                if status == "healthy":
-                    st.success(f"✅ 状态健康 (完整度 100%)")
-                elif status == "mismatch":
+                
+                # ----------------- 新增修复逻辑开始 -----------------
+                if status == "mismatch":
                     loss = details['doc_count'] - details['vector_count']
-                    st.error(f"⚠️ 数据不一致！丢失 {loss} 个向量片段 (建议重新生成)")
+                    st.error(f"⚠️ 数据不一致！丢失 {loss} 个向量片段。")
+                    
+                    st.markdown(f"""
+                    **当前进度**: {details['vector_count']} / {details['doc_count']}
+                    
+                    这可能是由于生成过程中断、网络超时或强制关闭导致的。
+                    点击下方按钮可以**从断点处继续生成**，无需从头开始。
+                    """)
+                    
+                    # 修复按钮
+                    if st.button("🔄 断点续传 / 修复索引", type="primary", use_container_width=True):
+                        progress_bar = st.progress(0.0, text="正在读取进度...")
+                        try:
+                            curr, total = resume_kb_embedding(
+                                selected_kb_to_view, 
+                                batch_size=50,  # 稍微加大批次
+                                progress_bar=progress_bar
+                            )
+                            if curr == total:
+                                st.success("✅ 修复完成！索引已完整。")
+                                st.rerun()
+                            else:
+                                st.warning(f"本轮处理结束，当前进度 {curr}/{total}。如果还没完，请再次点击继续。")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"修复过程中断: {e}")
+                            logger.error(f"修复知识库 {selected_kb_to_view} 时出错: {e}", exc_info=True)
+                            
                 elif status == "corrupted":
-                    st.error("❌ 索引文件损坏，无法读取")
+                    st.error("❌ 索引文件完全损坏，无法读取。建议删除重建。")
+                # ----------------- 新增修复逻辑结束 -----------------
+                
+                elif status == "healthy":
+                    st.success(f"✅ 状态健康 (完整度 100%)")
                 else:
                     st.warning("⚪ 空知识库")
 

@@ -1,6 +1,8 @@
 import os
 import json
 import shutil
+import math
+import time
 # [新增] 引入 faiss 读取索引信息
 import faiss
 from typing import List, Tuple, Any, Dict
@@ -196,3 +198,113 @@ def delete_kb(kb_name: str):
     if json_path.exists(): os.remove(json_path)
     vector_path = STORAGE_DIR / f"{kb_name}_faiss"
     if vector_path.exists(): shutil.rmtree(vector_path)
+
+def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -> Tuple[int, int]:
+    """
+    断点续传核心逻辑：
+    1. 读取 JSON 获取总任务量
+    2. 读取 FAISS 获取当前进度
+    3. 跳过已完成部分，继续处理剩余部分
+    4. 每处理完一批，立即覆写保存索引文件 (Checkpoint)
+    
+    Returns:
+        Tuple[int, int]: (当前向量数, 总文档数)
+    """
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    vector_path = STORAGE_DIR / f"{kb_name}_faiss"
+    
+    # 1. 加载源数据 (JSON)
+    if not json_path.exists():
+        raise FileNotFoundError(f"找不到源数据: {json_path}")
+    
+    all_docs = []
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        for item in data:
+            all_docs.append(Document(page_content=item["page_content"], metadata=item["metadata"]))
+    
+    total_docs = len(all_docs)
+    logger.info(f"知识库 {kb_name}: 总文档数 {total_docs}")
+    
+    # 2. 加载当前进度 (FAISS)
+    embeddings = HunyuanEmbeddings()
+    vectorstore = None
+    current_count = 0
+    
+    if vector_path.exists():
+        try:
+            # 尝试加载现有索引
+            vectorstore = FAISS.load_local(str(vector_path), embeddings, allow_dangerous_deserialization=True)
+            current_count = vectorstore.index.ntotal
+            logger.info(f"已加载现有索引，当前进度: {current_count}/{total_docs}")
+        except Exception as e:
+            logger.warning(f"现有索引损坏或无法读取，将重建: {e}")
+            current_count = 0
+    
+    # 如果已经完成了，直接返回
+    if current_count >= total_docs:
+        logger.info("任务已完成，无需处理")
+        return current_count, total_docs
+
+    # 3. 计算剩余任务
+    remaining_docs = all_docs[current_count:]
+    logger.info(f"剩余任务: {len(remaining_docs)} 个片段")
+    
+    if progress_bar:
+        progress_bar.progress(current_count / total_docs, text=f"准备继续：跳过前 {current_count} 个，剩余 {len(remaining_docs)} 个...")
+
+    # 4. 分批处理循环
+    # 计算需要多少个批次
+    total_batches = math.ceil(len(remaining_docs) / batch_size)
+    
+    for i in range(total_batches):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, len(remaining_docs))
+        
+        batch_docs = remaining_docs[start:end]
+        batch_texts = [d.page_content for d in batch_docs]
+        batch_metas = [d.metadata for d in batch_docs]
+        
+        # UI 进度显示
+        current_global_idx = current_count + start
+        if progress_bar:
+            pct = min(current_global_idx / total_docs, 1.0)
+            progress_bar.progress(pct, text=f"正在处理: {current_global_idx}/{total_docs} (Batch {i+1}/{total_batches})")
+
+        # 调用 Embedding (这里利用了之前增加的重试机制)
+        try:
+            batch_embeddings = embeddings.embed_documents(batch_texts)
+            
+            # 过滤有效向量
+            valid_text_embeddings = []
+            valid_metadatas = []
+            for text, emb, meta in zip(batch_texts, batch_embeddings, batch_metas):
+                if emb and len(emb) > 0:
+                    valid_text_embeddings.append((text, emb))
+                    valid_metadatas.append(meta)
+            
+            # 写入 FAISS
+            if valid_text_embeddings:
+                if vectorstore is None:
+                    # 如果是第一次创建
+                    vectorstore = FAISS.from_embeddings(valid_text_embeddings, embeddings, valid_metadatas)
+                else:
+                    # 追加到现有索引
+                    vectorstore.add_embeddings(valid_text_embeddings, valid_metadatas)
+                
+                # === 关键点：每批次立即保存 (Checkpoint) ===
+                vectorstore.save_local(str(vector_path))
+                current_count = vectorstore.index.ntotal
+                logger.info(f"Batch {i+1} Saved. Progress: {current_count}/{total_docs}")
+            
+            # 休息一下，防止 QPS 爆炸
+            time.sleep(0.5)
+            
+        except Exception as e:
+            logger.error(f"批次 {i+1} 处理失败: {e}", exc_info=True)
+            # 这里可以选择 continue 跳过，或者 raise 停止
+            # 为了数据完整性，建议 raise 停止，让用户重试，而不是跳过导致中间缺数据
+            raise e
+
+    final_count = vectorstore.index.ntotal if vectorstore else current_count
+    return final_count, total_docs
