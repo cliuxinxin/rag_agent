@@ -6,6 +6,8 @@ from langchain_core.output_parsers import PydanticOutputParser
 from src.state import AgentState
 from src.nodes.common import get_llm
 from src.logger import get_logger
+from src.bm25 import SimpleBM25Retriever
+from src.storage import peek_kb_random_chunks
 
 # 获取 logger 实例
 logger = get_logger("Node_Chat")
@@ -78,9 +80,12 @@ def search_node(state: AgentState) -> dict:
     query = state.get("current_search_query", "")
     source_docs = state.get("source_documents", [])
     vector_store = state.get("vector_store", None)
+    kb_names = state.get("kb_names", [])
+    # 获取当前的动态画像
+    current_summary = state.get("kb_summary", "未知领域")
     
     # [Log] 记录搜索动作
-    logger.info(f"[Searcher] 开始执行搜索任务: '{query}'")
+    logger.info(f"[Searcher] 开始执行搜索任务: '{query}' | 当前对库的理解: {current_summary}")
     
     if not query:
         logger.warning("[Searcher] 收到空查询指令")
@@ -88,13 +93,44 @@ def search_node(state: AgentState) -> dict:
 
     llm = get_llm()
 
-    # 简单扩充关键词
-    expansion_prompt = f"针对搜索意图 '{query}'，生成 3-4 个关键词，空格分隔。"
+    # === 1. [核心通用逻辑] 获取样本 ===
+    # 无论 current_summary 是否为空，都获取样本，增强 Prompt 的"体感"
+    # 这步操作非常快（毫秒级），不会影响性能
+    kb_preview_text = peek_kb_random_chunks(kb_names, sample_size=3)
+    
+    logger.info(f"[Searcher] 正在基于采样内容生成关键词...")
+
+    # === 2. 通用型 Prompt：不预设任何立场，只做"翻译" ===
+    # 结合采样和 summary（如果有的话），双重优化
+    summary_context = ""
+    if current_summary and len(current_summary) > 10 and "未知" not in current_summary and "暂时未知" not in current_summary:
+        summary_context = f"\n【补充：我们之前了解到这个知识库】{current_summary}\n"
+    
+    expansion_prompt = f"""你是一个专业的"术语对齐"专家。
+
+【任务】
+用户想搜索："{query}"
+
+【知识库实地采样】
+(以下是从数据库中随机抽取的 3 个片段，请仔细观察其**年代、语体、专业术语**)
+--- 采样开始 ---
+{kb_preview_text}
+--- 采样结束 ---
+{summary_context}
+【指令】
+1. 请模仿【知识库采样】的行文风格和用词习惯。
+2. 将用户的搜索意图**翻译**成最可能出现在该数据库中的 3-4 个关键词。
+3. **严禁使用现代词汇**，除非采样中出现了现代词汇。
+   - 如果采样是古文，就用古文词。
+   - 如果采样是代码，就用类名、函数名。
+
+请直接输出关键词，用空格分隔："""
+    
     try:
-        bm25_keywords = llm.invoke([HumanMessage(content=expansion_prompt)]).content.strip().replace('"', '')
-        logger.info(f"[Searcher] 扩展关键词: {bm25_keywords}")
+        bm25_keywords = llm.invoke([HumanMessage(content=expansion_prompt)]).content.strip().replace('"', '').replace('\n', ' ')
+        logger.info(f"[Searcher] 采样对齐后的关键词: {bm25_keywords}")
     except Exception as e:
-        logger.error(f"[Searcher] 关键词扩展失败: {e}")
+        logger.error(f"[Searcher] 关键词生成失败: {e}")
         bm25_keywords = query
     
     results_bm25 = []
@@ -102,10 +138,11 @@ def search_node(state: AgentState) -> dict:
 
     if source_docs:
         try:
-            bm25_retriever = BM25Retriever.from_documents(source_docs)
-            bm25_retriever.k = 10 
-            results_bm25 = bm25_retriever.invoke(f"{query} {bm25_keywords}")
-        except: pass
+            bm25_retriever = SimpleBM25Retriever(source_docs)
+            results_bm25 = bm25_retriever.search(f"{query} {bm25_keywords}", k=10)
+        except Exception as e:
+            logger.warning(f"BM25 检索失败: {e}")
+            results_bm25 = []
     
     if vector_store:
         try:
@@ -129,10 +166,35 @@ def search_node(state: AgentState) -> dict:
         return {
             "messages": [AIMessage(content=f"Searcher: 未找到相关信息。", name="Searcher")],
             "attempted_searches": [query],
-            "failed_topics": [query]
+            "failed_topics": [query],
+            "kb_summary": current_summary  # 保持原有画像
         }
 
-    # 笔记生成
+    # === 3. [核心新增] 动态更新知识库画像 (Learn from Docs) ===
+    new_summary = current_summary
+    if final_docs:
+        # 提取这次检索到的内容的摘要
+        content_preview = "\n".join([d.page_content[:200] for d in final_docs[:3]])
+        
+        update_profile_prompt = f"""我们要维护一个"知识库画像"，通过阅读检索到的片段来不断修正我们对这个知识库的认知。
+
+【旧画像】{current_summary}
+【新检索到的片段】
+{content_preview}
+
+请结合【新片段】，用一句话更新【旧画像】。
+描述这个知识库主要是关于什么领域的？包含哪些核心技术栈或业务？
+不要太长，只保留核心特征。"""
+        
+        # 这是一个后台"学习"过程，不应该阻塞太久，但为了效果我们同步执行
+        try:
+            new_summary = llm.invoke([HumanMessage(content=update_profile_prompt)]).content.strip()
+            logger.info(f"[Learning] 知识库画像已更新: {new_summary}")
+        except Exception as e:
+            logger.error(f"[Learning] 画像更新失败: {e}")
+            new_summary = current_summary
+
+    # === 4. 生成笔记 (保持原有逻辑) ===
     context_text = "\n\n".join([f"[Ref {i+1}] {d.page_content}" for i, d in enumerate(final_docs)])
     filter_prompt = f"任务: '{query}'\n资料:\n{context_text}\n请提取关键信息。"
     extraction = llm.invoke([HumanMessage(content=filter_prompt)]).content
@@ -145,7 +207,9 @@ def search_node(state: AgentState) -> dict:
         "messages": [AIMessage(content=f"【搜索报告】\n方向: {query}\n发现:\n{extraction}", name="Searcher")],
         "final_evidence": final_docs,
         "attempted_searches": [query],
-        "research_notes": [current_note]
+        "research_notes": [current_note],
+        # [新增] 将更新后的画像回写到状态中，供下一轮使用
+        "kb_summary": new_summary
     }
 
 # === Answerer ===

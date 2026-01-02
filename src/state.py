@@ -46,6 +46,10 @@ class AgentState(TypedDict):
     attempted_searches: Annotated[List[str], add_strings]
     failed_topics: Annotated[List[str], add_strings]
     research_notes: Annotated[List[str], add_strings]
+    # [新增] 动态知识库画像：Agent 会把从文档里看到的特征记在这里
+    kb_summary: str
+    # [新增] 知识库名称列表：用于采样和上下文对齐
+    kb_names: List[str]
 # === [新增] 深度写作状态 ===
 class WriterState(TypedDict):
     project_id: str

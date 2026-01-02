@@ -191,6 +191,7 @@ def render():
             "messages": [HumanMessage(content=final_query)],
             "source_documents": source_documents,
             "vector_store": vector_store,
+            "kb_names": st.session_state.selected_kbs,  # [新增] 传递知识库名称列表
             "next": "Supervisor",
             "current_search_query": "",
             "final_evidence": [],
@@ -198,6 +199,8 @@ def render():
             "attempted_searches": [],
             "research_notes": [],
             "failed_topics": [],
+            # [新增] 初始化为空或通用描述
+            "kb_summary": "暂时未知（等待检索后分析）",
             # 深度解读专用字段（设置默认值）
             "full_content": "",
             "doc_title": "",

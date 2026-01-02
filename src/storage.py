@@ -3,6 +3,7 @@ import json
 import shutil
 import math
 import time
+import random
 # [新增] 引入 faiss 读取索引信息
 import faiss
 from typing import List, Tuple, Any, Dict
@@ -381,3 +382,36 @@ def get_chunk_vector(kb_name: str, chunk_index: int) -> Dict:
         logger.error(f"读取知识库 {kb_name} 片段 #{chunk_index} 的向量时出错: {e}", exc_info=True)
         
     return result
+
+def peek_kb_random_chunks(kb_names: List[str], sample_size: int = 3) -> str:
+    """
+    通用采样：从指定的知识库列表中，随机抽取几个片段。
+    目的：让 LLM 快速感知这个库的"画风"、词汇习惯和年代背景。
+    """
+    previews = []
+    
+    for name in kb_names:
+        json_path = STORAGE_DIR / f"{name}.json"
+        if json_path.exists():
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data:
+                        # 随机抽取，或者取前几个
+                        # 为了速度和代表性，我们取前、中、后各一个，或者直接随机
+                        # 限制 sample_size 防止 token 爆炸
+                        real_sample_size = min(len(data), sample_size)
+                        samples = random.sample(data, real_sample_size)
+                        
+                        for s in samples:
+                            content = s.get("page_content", "")[:200]  # 只取前200字做样本
+                            previews.append(f"[来自库 {name}]: ...{content}...")
+            except Exception as e:
+                logger.warning(f"采样知识库 {name} 时出错: {e}")
+                continue
+    
+    if not previews:
+        return "（知识库为空或无法读取，无样本）"
+    
+    # 返回拼接好的样本字符串
+    return "\n\n".join(previews)
