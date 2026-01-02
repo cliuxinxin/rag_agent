@@ -1,11 +1,16 @@
 import os
 import json
 import shutil
+# [新增] 引入 faiss 读取索引信息
+import faiss
 from typing import List, Tuple, Any, Dict
 from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from src.embeddings import HunyuanEmbeddings
+from src.logger import get_logger
+
+logger = get_logger("Storage")
 
 STORAGE_DIR = Path("storage")
 STORAGE_DIR.mkdir(exist_ok=True)
@@ -15,17 +20,23 @@ def list_kbs() -> List[str]:
 
 def get_kb_details(kb_name: str) -> Dict:
     """
-    获取知识库的详细信息（用于检视）。
+    获取知识库详细信息，新增向量索引健康度检查
     """
     json_path = STORAGE_DIR / f"{kb_name}.json"
+    # LangChain 保存 FAISS 时，会在目录下生成 index.faiss 和 index.pkl
+    faiss_index_path = STORAGE_DIR / f"{kb_name}_faiss" / "index.faiss"
+    
     info = {
         "name": kb_name,
-        "doc_count": 0,
+        "doc_count": 0,       # JSON 中的片段数 (应有数量)
+        "vector_count": 0,    # FAISS 中的向量数 (实际数量)
         "total_chars": 0,
         "languages": set(),
-        "preview": []
+        "preview": [],
+        "health_status": "unknown"  # healthy, corrupted, empty, mismatch
     }
     
+    # 1. 读取 JSON (元数据层)
     if json_path.exists():
         with open(json_path, "r", encoding="utf-8") as f:
             try:
@@ -38,14 +49,40 @@ def get_kb_details(kb_name: str) -> Dict:
                     if "language" in meta:
                         info["languages"].add(meta["language"])
                     
-                    # 取前5条作为预览
-                    if idx < 5:
+                    if idx < 3:  # 预览前3条即可
                         info["preview"].append({
-                            "content": content[:200] + "..." if len(content) > 200 else content,
+                            "content": content[:100] + "..." if len(content) > 100 else content,
                             "source": meta.get("source", "unknown")
                         })
-            except:
-                pass
+            except Exception as e:
+                print(f"JSON读取错误: {e}")
+
+    # 2. 读取 FAISS (物理存储层)
+    if faiss_index_path.exists():
+        try:
+            # 仅读取索引头，速度极快，不需要加载整个模型
+            index = faiss.read_index(str(faiss_index_path))
+            info["vector_count"] = index.ntotal
+            logger.debug(f"知识库 {kb_name}: FAISS 索引读取成功，向量数: {info['vector_count']}")
+        except Exception as e:
+            logger.error(f"知识库 {kb_name}: FAISS读取错误: {e}")
+            info["vector_count"] = -1  # 标记为损坏
+    else:
+        logger.debug(f"知识库 {kb_name}: FAISS 索引文件不存在")
+    
+    # 3. 判断健康状态
+    if info["doc_count"] == 0 and info["vector_count"] == 0:
+        info["health_status"] = "empty"
+    elif info["vector_count"] == -1:
+        info["health_status"] = "corrupted"  # 索引文件损坏
+        logger.warning(f"知识库 {kb_name}: 索引文件损坏")
+    elif info["doc_count"] == info["vector_count"]:
+        info["health_status"] = "healthy"  # 完美匹配
+        logger.info(f"知识库 {kb_name}: 健康状态正常 (JSON: {info['doc_count']}, FAISS: {info['vector_count']})")
+    else:
+        info["health_status"] = "mismatch"  # 数量不一致 (丢包了)
+        loss = info['doc_count'] - info['vector_count']
+        logger.warning(f"知识库 {kb_name}: 数据不一致！JSON片段: {info['doc_count']}, FAISS向量: {info['vector_count']}, 丢失: {loss}")
     
     info["languages"] = list(info["languages"])
     return info

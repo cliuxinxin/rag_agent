@@ -24,20 +24,55 @@ def render():
                     st.rerun()
             
             with col_detail:
-                st.subheader(f"🔍 检视: {selected_kb_to_view}")
+                # 获取增强后的详情
                 details = get_kb_details(selected_kb_to_view)
-                m1, m2 = st.columns(2)
-                m1.metric("片段数量", details["doc_count"])
-                m2.metric("总字符数", details["total_chars"])
+                
+                # === 标题栏 + 状态徽章 ===
+                st.subheader(f"🔍 检视: {selected_kb_to_view}")
+                
+                status = details["health_status"]
+                if status == "healthy":
+                    st.success(f"✅ 状态健康 (完整度 100%)")
+                elif status == "mismatch":
+                    loss = details['doc_count'] - details['vector_count']
+                    st.error(f"⚠️ 数据不一致！丢失 {loss} 个向量片段 (建议重新生成)")
+                elif status == "corrupted":
+                    st.error("❌ 索引文件损坏，无法读取")
+                else:
+                    st.warning("⚪ 空知识库")
+
+                # === 核心指标对比 ===
+                m1, m2, m3 = st.columns(3)
+                m1.metric("原始片段 (JSON)", details["doc_count"])
+                
+                # 如果数量不一致，用红色显示向量数
+                vec_label = "向量索引 (FAISS)"
+                vec_val = details["vector_count"]
+                if status == "mismatch":
+                    delta_color = "inverse"  # 显示红色下降箭头
+                    m2.metric(vec_label, vec_val, delta=f"{vec_val - details['doc_count']}", delta_color=delta_color)
+                else:
+                    m2.metric(vec_label, vec_val)
+
+                m3.metric("总字符数", f"{details['total_chars'] / 1000:.1f}k")
+                
                 st.divider()
-                st.write("📄 **内容预览 (随机前5条)**")
+                
+                # === 调试信息 ===
+                with st.expander("📊 详细统计信息", expanded=True):
+                    st.write(f"**语言**: {', '.join(details['languages']) if details['languages'] else '未指定'}")
+                    st.write(f"**存储路径**: `storage/{selected_kb_to_view}_faiss/index.faiss`")
+                    if status == "mismatch":
+                        st.caption("💡 提示：'原始片段'来自 JSON 备份，'向量索引'来自实际 FAISS 数据库。如果不一致，说明在向量化过程中发生了中断或错误。")
+
+                st.write("📄 **内容预览**")
                 if details["preview"]:
                     for item in details["preview"]:
                         with st.container(border=True):
                             st.caption(f"来源: {item['source']}")
                             st.text(item['content'])
                 else:
-                    st.write("该知识库为空或无法读取。")
+                    st.caption("无预览内容")
     
     with tabs[1]:
         st.subheader("上传文档")
