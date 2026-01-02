@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # 导入视图
-from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen # <--- 新增
+from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen, system_logs
 from src.db import init_db
 from src.logger import get_logger
 
@@ -84,8 +84,8 @@ def main():
             # 这里的顺序对应下面的 if-else
             page = st.radio(
                 "导航",
-                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "📰 新闻工作室 (New)", "📊 PPT 生成器", "⚙️ 知识库"], # <--- 新增选项
-                index=3,
+                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "📰 新闻工作室 (New)", "📊 PPT 生成器", "⚙️ 知识库", "🛠️ 系统日志"],
+                index=0,
             )
 
         if page == "💬 对话":
@@ -96,10 +96,12 @@ def main():
             deep_qa.render()
         elif page == "📰 新闻工作室 (New)":
             deep_write_v2.render()
-        elif page == "📊 PPT 生成器": # <--- 新增分支
+        elif page == "📊 PPT 生成器":
             ppt_gen.render()
-        else:
+        elif page == "⚙️ 知识库":
             kb_management.render()
+        elif page == "🛠️ 系统日志":
+            system_logs.render()
             
     elif st.session_state["authentication_status"] is False:
         logger.warning(f"用户登录失败: 用户名 {st.session_state.get('username')}")
