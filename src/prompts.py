@@ -332,3 +332,73 @@ def get_ppt_writer_prompt(content: str, outline_str: str) -> str:
 
 确保 JSON 格式合法。
 """
+
+
+# === Deep Mastery (20/80 Learning) ===
+
+def get_mastery_extractor_prompt(topic: str) -> str:
+    return f"""
+    你是一个严谨的学术导师。用户想要学习主题：【{{topic}}】。
+
+    请执行"降维打击"，拆解出该主题最本质的"关键 20%"。
+    
+    【重要指令】
+    1. **锁定领域**：你提取的概念必须是【{{topic}}】领域的专业术语。
+       - 如果用户问"{topic}"，严禁出现"导数"或"损失函数"等其他领域概念。
+       - 如果用户问"微积分"，严禁出现"区块链"。
+    2. **核心验证**：如果删掉这个概念，{topic} 就不复存在。
+
+    请输出 JSON 格式：
+    [
+        {{
+            "name": "核心概念名称", 
+            "axiom": "底层公理定义",
+            "reason": "为什么它是20%？"
+        }},
+        ...
+    ]
+    """
+
+def get_mastery_expander_prompt(topic: str, concept: str, all_concepts_str: str) -> str:
+    return f"""
+    我们正在深度解析主题【{{topic}}】的核心节点：【{{concept}}】。
+    其他核心节点有：{all_concepts_str}。
+
+    【任务】
+    请扮演一位擅长"费曼技巧"的通俗科普作家。请生成关于【{{concept}}】的深度解析数据。
+
+    请严格输出 JSON 格式（不要 Markdown 代码块）：
+    {{
+        "one_sentence_def": "用最直白的大白话定义它（不要掉书袋）",
+        "analogy": "一个生活中的神类比（例如：把HTTP比作寄信）",
+        "core_logic": "它的底层运作逻辑（The 20%）",
+        "relationships": [
+            "与 XX 的关系：......",
+            "与 XX 的关系：......"
+        ],
+        "derivations": [
+            "正因为有它，所以衍生出了 XX 特性...",
+            "由于它的限制，导致了 XX 问题..."
+        ],
+        "suggested_questions": [
+            "生成3个用户最可能感兴趣的追问（简短、犀利）",
+            "问题2...",
+            "问题3..."
+        ]
+    }}
+    """
+
+def get_mastery_chat_prompt(topic: str, concept: str, history: str, user_input: str) -> str:
+    return f"""
+    你现在是【{{topic}}】领域的专家，正在专注于讲解核心概念【{{concept}}】。
+    
+    【对话历史】
+    {history}
+    
+    【用户提问】
+    {user_input}
+    
+    请回答用户。要求：
+    1. 时刻关联回"底层逻辑"和"与其他概念的关系"。
+    2. 如果用户问的是琐碎的细节（80%），请指出"这只是由核心概念XX衍生出来的特性"。
+    """

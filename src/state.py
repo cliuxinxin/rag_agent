@@ -1,4 +1,4 @@
-from typing import List, TypedDict, Annotated, Sequence, Any
+from typing import List, TypedDict, Annotated, Sequence, Any, Dict
 from langchain_core.messages import BaseMessage
 from langchain_core.documents import Document
 import operator
@@ -141,3 +141,33 @@ class PPTState(TypedDict):
     # ================
     
     run_logs: Annotated[List[str], add_strings]
+
+
+# === Deep Mastery State ===
+class MasteryState(TypedDict):
+    # 输入
+    topic: str
+    session_id: str
+    
+    # 阶段 1: 全景
+    core_concepts: List[dict] # [{"name":..., "axiom":...}]
+    
+    # === 新增：缓存层 ===
+    # key: concept_name, value: dict (structured data)
+    details_cache: Dict[str, dict] 
+    
+    # key: concept_name, value: list of messages
+    chat_histories_cache: Dict[str, List[BaseMessage]] 
+    
+    # 新增：用于 UI 渲染时的临时推荐问题
+    current_suggestions: List[str]
+    
+    # 阶段 2: 详情与交互
+    selected_concept: str     # 当前选中的概念名称
+    concept_detail: str       # 当前概念的深度讲解 (Markdown)
+    
+    # 阶段 3: 对话
+    chat_history: Annotated[List[BaseMessage], add_messages] # 当前概念下的对话记录
+    
+    # 控制
+    next: str

@@ -1,3 +1,4 @@
+# src/db.py
 import sqlite3
 import uuid
 import json
@@ -93,6 +94,16 @@ def init_db():
             research_report TEXT,  -- 调研报告
             outline_data TEXT,     -- 大纲结构 (JSON)
             full_draft TEXT        -- 最终草稿
+        )
+        ''')
+        
+        # 6. 深度掌握会话表
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS mastery_sessions (
+            id TEXT PRIMARY KEY,
+            topic TEXT,
+            concepts_data TEXT, -- JSON List
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
 
@@ -324,5 +335,89 @@ def delete_project(project_id: str):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute("DELETE FROM writing_projects WHERE id = ?", (project_id,))
+    conn.commit()
+    conn.close()
+
+
+# === 深度掌握 (Mastery) ===
+
+def create_mastery_session(topic: str) -> str:
+    session_id = str(uuid.uuid4())
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    # 复用 writing_projects 表结构，或者新建表
+    # 这里我们简单起见，新建一个表
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS mastery_sessions (
+        id TEXT PRIMARY KEY,
+        topic TEXT,
+        concepts_data TEXT, -- JSON List
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    c.execute("INSERT INTO mastery_sessions (id, topic, concepts_data) VALUES (?, ?, ?)", 
+              (session_id, topic, "[]"))
+    conn.commit()
+    conn.close()
+    return session_id
+
+def update_mastery_concepts(session_id: str, concepts: List[dict]):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
+              (json.dumps(concepts, ensure_ascii=False), session_id))
+    conn.commit()
+    conn.close()
+
+def get_mastery_session(session_id: str) -> Optional[Dict]:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    try:
+        c.execute("SELECT * FROM mastery_sessions WHERE id = ?", (session_id,))
+        row = c.fetchone()
+        if row:
+            data = dict(row)
+            data['concepts_data'] = json.loads(data['concepts_data'])
+            return data
+    except:
+        return None
+    finally:
+        conn.close()
+    return None
+
+def get_all_mastery_sessions() -> List[Dict]:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    try:
+        c.execute("SELECT * FROM mastery_sessions ORDER BY created_at DESC")
+        rows = c.fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            # === 修复：在这里统一解析 JSON，防止前端拿到字符串 ===
+            try:
+                d['concepts_data'] = json.loads(d['concepts_data'])
+            except:
+                d['concepts_data'] = []
+            results.append(d)
+        return results
+    except Exception as e:
+        logger.error(f"获取列表失败: {e}")
+        return []
+    finally:
+        conn.close()
+
+def update_mastery_session_data(session_id: str, concepts_data: List[dict]):
+    """
+    保存完整的概念列表，包含已经生成的 detail 和 chat_history
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    # 序列化整个列表
+    json_str = json.dumps(concepts_data, ensure_ascii=False)
+    c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
+              (json_str, session_id))
     conn.commit()
     conn.close()
