@@ -16,3 +16,4 @@ PyYAML
 markdown
 python-pptx
 python-frontmatter
+langgraph-checkpoint-sqlite
