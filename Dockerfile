@@ -14,7 +14,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制项目代码
+# 显式复制 skills 目录，确保它被拷进去了
+COPY skills ./skills
+
+# 复制项目代码 (放在最后，利用缓存)
 COPY . .
 
 # 创建必要的目录 (用于知识库存储)

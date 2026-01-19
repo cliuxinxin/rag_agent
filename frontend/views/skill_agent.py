@@ -7,8 +7,9 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from src.graphs.skill_graph import skill_graph
 from src.skills.loader import SkillRegistry
 
-# 你的项目风格
-SKILLS_DIR = Path("skills")
+# 使用绝对路径，与 loader.py 中的路径保持一致
+BASE_DIR = Path(__file__).parent.parent.parent.resolve() # /app
+SKILLS_DIR = BASE_DIR / "skills"
 registry = SkillRegistry()
 
 def display_images_from_text(text_content):

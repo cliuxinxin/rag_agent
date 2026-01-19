@@ -1,10 +1,18 @@
 # src/skills/loader.py
+import os
 import frontmatter as fm
 from pathlib import Path
 from typing import Dict, List, Optional, TypedDict
 
 # 指向根目录下的 skills 文件夹
-SKILLS_ROOT = Path("skills")
+# 获取当前文件 (loader.py) 所在的目录: /app/src/skills
+CURRENT_DIR = Path(__file__).parent.resolve()
+# 回退两级到 /app，然后指向 skills
+# 假设结构是 /app/src/skills/loader.py -> /app/skills
+SKILLS_ROOT = CURRENT_DIR.parent.parent / "skills"
+
+# 打印一下路径方便调试 (在 docker logs 中能看到)
+print(f"DEBUG: Loading skills from: {SKILLS_ROOT}")
 
 class SkillMetadata(TypedDict):
     name: str
