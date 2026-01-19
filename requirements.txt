@@ -15,3 +15,4 @@ streamlit-authenticator==0.3.3
 PyYAML
 markdown
 python-pptx
+python-frontmatter

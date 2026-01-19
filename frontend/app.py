@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # 导入视图
-from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen, system_logs, deep_mastery
+from frontend.views import chat, deep_read, deep_qa, kb_management, deep_write_v2, ppt_gen, system_logs, deep_mastery, skill_agent
 from src.db import init_db
 from src.logger import get_logger
 
@@ -84,7 +84,7 @@ def main():
             # 这里的顺序对应下面的 if-else
             page = st.radio(
                 "导航",
-                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "🎓 深度掌握", "📰 新闻工作室 (New)", "📊 PPT 生成器", "⚙️ 知识库", "🛠️ 系统日志"],
+                ["💬 对话", "🧠 深度解读", "❓ 深度追问", "🎓 深度掌握", "🤖 Skill Agent", "📰 新闻工作室 (New)", "📊 PPT 生成器", "⚙️ 知识库", "🛠️ 系统日志"],
                 index=0,
             )
 
@@ -102,6 +102,8 @@ def main():
             ppt_gen.render()
         elif page == "⚙️ 知识库":
             kb_management.render()
+        elif page == "🤖 Skill Agent":
+            skill_agent.render()
         elif page == "🛠️ 系统日志":
             system_logs.render()
             
