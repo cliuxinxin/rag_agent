@@ -11,16 +11,12 @@ CURRENT_SCRIPT_PATH = Path(__file__).resolve()
 # 逻辑：loader.py -> src/skills/ -> src/ -> app/
 PROJECT_ROOT = CURRENT_SCRIPT_PATH.parent.parent.parent
 
-# 指向 /app/skills
-SKILLS_ROOT = PROJECT_ROOT / "skills"
+# 强制定位到 /app/skills 的绝对路径
+# 逻辑：当前文件在 /app/src/skills/loader.py -> 回退3层到 /app -> 拼接 skills
+SKILLS_ROOT = Path(__file__).parent.parent.parent / "skills"
 
-# 添加调试打印 (在 docker logs 中能看到)
-print(f"--- DEBUG ---")
-print(f"Loader Path: {CURRENT_SCRIPT_PATH}")
-print(f"Project Root: {PROJECT_ROOT}")
-print(f"Skills Dir: {SKILLS_ROOT}")
-print(f"Exists?: {SKILLS_ROOT.exists()}")
-print(f"----------------")
+# 打印调试信息，重启容器后看日志
+print(f"DEBUG: Skill Loader looking at: {SKILLS_ROOT} | Exists: {SKILLS_ROOT.exists()}")
 
 class SkillMetadata(TypedDict):
     name: str

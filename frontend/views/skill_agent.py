@@ -7,24 +7,25 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from src.graphs.skill_graph import skill_graph
 from src.skills.loader import SkillRegistry
 
-# 使用绝对路径，与 loader.py 中的路径保持一致
-BASE_DIR = Path(__file__).parent.parent.parent.resolve() # /app
-SKILLS_DIR = BASE_DIR / "skills"
+# 导入 loader 里的 registry 和刚才定义好的绝对路径
+from src.skills.loader import SKILLS_ROOT 
+
+# 直接复用 loader.py 里计算好的绝对路径，确保统一
 registry = SkillRegistry()
 
 def display_images_from_text(text_content):
     """从文本中检测图片文件名并在本地查找显示"""
     if not text_content: return
-    # 匹配 .png, .jpg, .jpeg 结尾的文件名
     pattern = r"([a-zA-Z0-9_\-\.]+\.(?:png|jpg|jpeg))"
     matches = list(set(re.findall(pattern, text_content)))
     for filename in matches:
-        # 在 skills 目录下递归查找
-        found_files = list(SKILLS_DIR.rglob(filename))
+        # 使用 SKILLS_ROOT (绝对路径) 进行查找
+        found_files = list(SKILLS_ROOT.rglob(filename))
         if found_files:
-            # 使用 container 保证格式整齐
             with st.container():
                 st.image(str(found_files[0]), caption=f"📊 {filename}", width=600)
+
+
 
 def render():
     st.header("🤖 Skill Agent (工具智能体)")

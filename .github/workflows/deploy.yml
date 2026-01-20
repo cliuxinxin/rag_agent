@@ -24,7 +24,7 @@ jobs:
             git pull origin main --force
             
             # 重新构建并启动
-            docker-compose up -d --build
+            docker-compose up -d --build --force-recreate
             
             # 清理垃圾镜像
             docker image prune -f
