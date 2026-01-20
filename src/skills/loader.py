@@ -4,19 +4,15 @@ import frontmatter as fm
 from pathlib import Path
 from typing import Dict, List, Optional, TypedDict
 
-# 获取当前脚本绝对路径: /app/src/skills/loader.py
-CURRENT_SCRIPT_PATH = Path(__file__).resolve()
+# === 🚀 终极稳健写法 ===
+# 不管是本地还是 Docker，我们都基于"当前工作目录"来找
+# 在 Docker 里，CWD 是 /app -> 路径就是 /app/skills
+# 在 本地启动，CWD 是项目根目录 -> 路径就是 ./skills
+CWD = Path(os.getcwd())
+SKILLS_ROOT = CWD / "skills"
 
-# 回退到项目根目录 /app
-# 逻辑：loader.py -> src/skills/ -> src/ -> app/
-PROJECT_ROOT = CURRENT_SCRIPT_PATH.parent.parent.parent
-
-# 强制定位到 /app/skills 的绝对路径
-# 逻辑：当前文件在 /app/src/skills/loader.py -> 回退3层到 /app -> 拼接 skills
-SKILLS_ROOT = Path(__file__).parent.parent.parent / "skills"
-
-# 打印调试信息，重启容器后看日志
-print(f"DEBUG: Skill Loader looking at: {SKILLS_ROOT} | Exists: {SKILLS_ROOT.exists()}")
+print(f"DEBUG: Current Working Directory: {CWD}")
+print(f"DEBUG: Target SKILLS_ROOT: {SKILLS_ROOT}")
 
 class SkillMetadata(TypedDict):
     name: str
@@ -34,11 +30,8 @@ class AgentSkill:
         if not self.skill_file.exists():
             raise FileNotFoundError(f"Missing SKILL.md in {self.root_path}")
         
-        # Use the correct API for this version of frontmatter
-        result = fm.Frontmatter.read_file(str(self.skill_file))
-        post = type('Post', (), {})()  # Create a dummy object
-        post.metadata = result['attributes']
-        post.content = result['body']
+        # Use the correct API for python-frontmatter package
+        post = fm.load(str(self.skill_file))
         
         self.metadata = SkillMetadata(
             name=post.metadata.get("name", self.root_path.name),
@@ -54,19 +47,41 @@ class AgentSkill:
 
 class SkillRegistry:
     def __init__(self):
-        SKILLS_ROOT.mkdir(exist_ok=True)
+        # 强制建立目录（防止报错）
+        if not SKILLS_ROOT.exists():
+            print(f"❌ 警告: 目录 {SKILLS_ROOT} 不存在，尝试创建...")
+            try:
+                SKILLS_ROOT.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"❌ 创建失败: {e}")
+
         self.skills: Dict[str, AgentSkill] = {}
         self.refresh()
 
     def refresh(self):
         self.skills = {}
-        for item in SKILLS_ROOT.iterdir():
-            if item.is_dir() and (item / "SKILL.md").exists():
-                try:
-                    skill = AgentSkill(item)
-                    self.skills[skill.name] = skill
-                except Exception as e:
-                    print(f"Error loading skill {item.name}: {e}")
+        
+        # 🔍 打印详细遍历日志
+        if SKILLS_ROOT.exists():
+            print(f"📂 开始遍历: {SKILLS_ROOT}")
+            for item in SKILLS_ROOT.iterdir():
+                if item.is_dir():
+                    # 关键检查点：文件名必须是大写的 SKILL.md
+                    skill_file = item / "SKILL.md"
+                    
+                    if skill_file.exists():
+                        try:
+                            skill = AgentSkill(item)
+                            self.skills[skill.name] = skill
+                            print(f"   ✅ 加载成功: {skill.name}")
+                        except Exception as e:
+                            print(f"   ❌ 加载出错 {item.name}: {e}")
+                    else:
+                        # 检查是不是大小写搞错了
+                        files = [f.name for f in item.glob("*")]
+                        print(f"   ⚠️ 忽略文件夹 {item.name}: 没找到 SKILL.md. 现有文件: {files}")
+        else:
+            print("❌ SKILLS_ROOT 目录根本不存在！")
 
     def get_skill(self, name: str) -> Optional[AgentSkill]:
         return self.skills.get(name)

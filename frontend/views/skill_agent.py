@@ -29,6 +29,43 @@ def display_images_from_text(text_content):
 
 def render():
     st.header("🤖 Skill Agent (工具智能体)")
+    
+    # === 🛑 诊断面板 (如果修好了可以删掉) ===
+    with st.expander("🕵️‍♂️ 服务器文件侦探", expanded=True):
+        import os
+        from pathlib import Path
+        
+        cwd = Path(os.getcwd())
+        target = cwd / "skills"
+        
+        st.write(f"📂 工作目录: `{cwd}`")
+        st.write(f"🎯 目标目录: `{target}`")
+        
+        if not target.exists():
+            st.error("❌ 致命错误：skills 目录不存在！请检查 Docker COPY 指令。")
+        else:
+            st.success("✅ skills 目录存在，正在扫描内容...")
+            # 遍历一级目录
+            subfolders = [f for f in target.iterdir() if f.is_dir()]
+            
+            if not subfolders:
+                st.warning("⚠️ 目录存在，但是是空的！")
+            
+            for folder in subfolders:
+                st.markdown(f"**📁 {folder.name}**")
+                # 遍历二级文件
+                files = list(folder.glob("*"))
+                file_names = [f.name for f in files]
+                st.code(str(file_names))
+                
+                if "SKILL.md" in file_names:
+                    st.success("   -> SKILL.md 正常")
+                elif "skill.md" in file_names:
+                    st.error("   -> ❌ 错误：发现了 skill.md (小写)，Linux 下无法识别！必须改为 SKILL.md")
+                else:
+                    st.error("   -> ❌ 错误：缺失 SKILL.md")
+    # === 诊断结束 ===
+    
     st.caption("基于路由器的多技能自治 Agent，支持 Python 脚本执行、图表绘制等。")
 
     # === 侧边栏技能展示 ===

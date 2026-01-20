@@ -17,3 +17,4 @@ markdown
 python-pptx
 python-frontmatter
 langgraph-checkpoint-sqlite
+numpy<2.0.0
