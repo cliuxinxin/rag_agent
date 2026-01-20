@@ -4,15 +4,23 @@ import frontmatter as fm
 from pathlib import Path
 from typing import Dict, List, Optional, TypedDict
 
-# 指向根目录下的 skills 文件夹
-# 获取当前文件 (loader.py) 所在的目录: /app/src/skills
-CURRENT_DIR = Path(__file__).parent.resolve()
-# 回退两级到 /app，然后指向 skills
-# 假设结构是 /app/src/skills/loader.py -> /app/skills
-SKILLS_ROOT = CURRENT_DIR.parent.parent / "skills"
+# 获取当前脚本绝对路径: /app/src/skills/loader.py
+CURRENT_SCRIPT_PATH = Path(__file__).resolve()
 
-# 打印一下路径方便调试 (在 docker logs 中能看到)
-print(f"DEBUG: Loading skills from: {SKILLS_ROOT}")
+# 回退到项目根目录 /app
+# 逻辑：loader.py -> src/skills/ -> src/ -> app/
+PROJECT_ROOT = CURRENT_SCRIPT_PATH.parent.parent.parent
+
+# 指向 /app/skills
+SKILLS_ROOT = PROJECT_ROOT / "skills"
+
+# 添加调试打印 (在 docker logs 中能看到)
+print(f"--- DEBUG ---")
+print(f"Loader Path: {CURRENT_SCRIPT_PATH}")
+print(f"Project Root: {PROJECT_ROOT}")
+print(f"Skills Dir: {SKILLS_ROOT}")
+print(f"Exists?: {SKILLS_ROOT.exists()}")
+print(f"----------------")
 
 class SkillMetadata(TypedDict):
     name: str
