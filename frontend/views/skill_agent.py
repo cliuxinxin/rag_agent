@@ -31,7 +31,7 @@ def render():
     st.header("🤖 Skill Agent (工具智能体)")
     
     # === 🛑 诊断面板 (如果修好了可以删掉) ===
-    with st.expander("🕵️‍♂️ 服务器文件侦探", expanded=True):
+    with st.expander("🕵️‍♂️ 服务器文件侦探", expanded=False):
         import os
         from pathlib import Path
         
