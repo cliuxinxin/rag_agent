@@ -567,7 +567,7 @@ def render_history_sidebar():
 
 
 def render_html_card(title, content_md, source_tag):
-    """极其稳定版：华尔街日报风格（顶栏报头 + 双栏排版），彻底解决崩溃与截断问题"""
+    """紧凑型双栏排版：精确包裹文字，拒绝任何多余白边和超大文件"""
     import markdown
     import re
 
@@ -582,27 +582,25 @@ def render_html_card(title, content_md, source_tag):
         <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image-more/3.1.6/dom-to-image-more.min.js"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&display=swap');
+            
+            * {{ box-sizing: border-box; }}
+            
             body {{
                 margin: 0;
                 padding: 0;
                 background-color: #f0f2f6;
                 font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
             }}
             
-            /* 控制栏：固定在最上方 */
+            /* 悬浮控制栏 */
             .control-panel {{
                 width: 100%;
                 background: #ffffff;
                 padding: 15px 0;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.05);
                 text-align: center;
-                position: sticky;
-                top: 0;
-                z-index: 100;
                 border-bottom: 1px solid #e2e8f0;
+                margin-bottom: 20px;
             }}
             .dl-btn {{
                 padding: 14px 30px;
@@ -615,129 +613,112 @@ def render_html_card(title, content_md, source_tag):
                 cursor: pointer;
                 box-shadow: 0 4px 15px rgba(15, 23, 42, 0.2);
                 transition: all 0.2s;
-                letter-spacing: 1px;
             }}
-            .dl-btn:hover {{
-                background: #38bdf8;
-                color: #0f172a;
-                border-color: #38bdf8;
-            }}
+            .dl-btn:hover {{ background: #38bdf8; color: #0f172a; border-color: #38bdf8; }}
 
-            /* 预览视窗：自带滚动条，保证不崩溃 */
-            #preview-window {{
+            /* 预览包裹器：负责在小屏幕里按比例缩放展示大卡片 */
+            #preview-wrapper {{
                 width: 100%;
-                height: 700px;
-                overflow: auto;
-                padding: 40px 0;
-                background: #e2e8f0;
-                box-sizing: border-box;
-            }}
-
-            /* 真实海报本体 */
-            #card-container {{
-                width: 1400px; /* 固定的宽幅尺寸 */
-                height: max-content; /* 核心：高度自动向下生长，绝不截断 */
+                position: relative;
+                overflow: hidden; /* 隐藏缩放后的多余边角 */
                 margin: 0 auto;
-                background: #ffffff;
-                box-shadow: 0 20px 50px rgba(0,0,0,0.15);
-                display: flex;
-                flex-direction: column;
             }}
 
-            /* 顶部报头 */
+            /* 真实卡片本体：1080px 标准高清宽度，高度全自动贴合文字 */
+            #card-container {{
+                width: 1080px; 
+                height: auto; /* 核心：高度自动，文字到哪，底边就到哪！ */
+                background: #ffffff;
+                position: absolute; /* 脱离文档流，方便 JS 自由缩放 */
+                top: 0;
+                left: 0;
+                transform-origin: top left;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            }}
+
+            /* 顶部大报头 */
             .card-header {{
                 background: #0f172a;
                 color: white;
-                padding: 60px 80px;
+                padding: 50px 60px;
                 text-align: center;
-                border-bottom: 8px solid #38bdf8;
+                border-bottom: 6px solid #38bdf8;
             }}
             .card-tag {{
-                font-size: 16px;
+                font-size: 15px;
                 text-transform: uppercase;
-                letter-spacing: 4px;
+                letter-spacing: 3px;
                 color: #38bdf8;
-                margin-bottom: 25px;
+                margin-bottom: 20px;
                 display: inline-block;
-                border: 1px solid rgba(56, 189, 248, 0.5);
-                padding: 6px 16px;
+                border: 1px solid rgba(56, 189, 248, 0.4);
+                padding: 4px 12px;
                 border-radius: 4px;
             }}
             .card-title {{
                 font-family: 'Noto Serif SC', serif;
-                font-size: 52px;
+                font-size: 46px;
                 font-weight: 900;
                 line-height: 1.35;
                 margin: 0 auto;
-                max-width: 1100px;
                 color: #f8fafc;
             }}
 
-            /* 双栏正文区 */
+            /* 双栏排版区 */
             .card-body {{
-                padding: 70px 80px;
-                background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-                background-size: 30px 30px;
-                
-                /* 核心魔法：完美双栏 */
-                column-count: 2;
-                column-gap: 80px;
+                padding: 50px 60px;
+                column-count: 2; /* 双栏排版，降低整体高度 */
+                column-gap: 60px;
                 column-rule: 1px solid #e2e8f0;
-                
                 color: #334155;
-                font-size: 22px;
-                line-height: 1.85;
+                font-size: 20px;
+                line-height: 1.8;
                 text-align: justify;
             }}
             
-            /* 防截断保护 */
+            /* 防截断保护与细节优化 */
             .card-body h1, .card-body h2, .card-body h3 {{
                 color: #0f172a;
-                font-size: 28px;
+                font-size: 24px;
                 margin-top: 0;
-                margin-bottom: 25px;
-                border-left: 6px solid #38bdf8;
-                padding-left: 15px;
+                margin-bottom: 20px;
+                border-left: 5px solid #38bdf8;
+                padding-left: 12px;
                 break-after: avoid; 
                 page-break-after: avoid;
             }}
             .card-body p {{ 
-                margin-bottom: 25px; 
+                margin-bottom: 20px; 
                 break-inside: avoid;
-                page-break-inside: avoid;
             }}
             .card-body blockquote {{
-                margin: 0 0 25px 0;
-                padding: 20px 25px;
+                margin: 0 0 20px 0;
+                padding: 15px 20px;
                 background: #f8fafc;
                 border-left: 4px solid #94a3b8;
                 color: #64748b;
                 font-style: italic;
-                font-size: 20px;
+                font-size: 18px;
                 break-inside: avoid;
             }}
 
-            /* 底部版权 */
             .card-footer {{
                 background: #f1f5f9;
-                padding: 30px 80px;
+                padding: 25px 60px;
                 text-align: center;
-                font-size: 16px;
+                font-size: 15px;
                 color: #94a3b8;
                 border-top: 1px solid #e2e8f0;
                 letter-spacing: 2px;
-                font-family: monospace;
             }}
         </style>
     </head>
     <body>
-        <!-- 悬浮的下载按钮区 -->
         <div class="control-panel">
-            <button class="dl-btn" onclick="downloadCard()">📸 保存为 1400px 杂志级双栏长图</button>
+            <button class="dl-btn" onclick="downloadCard()">📸 保存为 1080px 高清双栏长图 (紧凑无白边)</button>
         </div>
         
-        <!-- 原生滚动预览区：告别 JS 崩溃 -->
-        <div id="preview-window">
+        <div id="preview-wrapper">
             <div id="card-container">
                 <div class="card-header">
                     <span class="card-tag">{source_tag}</span>
@@ -747,40 +728,75 @@ def render_html_card(title, content_md, source_tag):
                     {html_content}
                 </div>
                 <div class="card-footer">
-                    DEEPSEEK RAG PRO · EDITORIAL DESIGN
+                    DEEPSEEK RAG PRO · COMPACT EDITORIAL
                 </div>
             </div>
         </div>
 
         <script>
-            function downloadCard() {{
-                const node = document.getElementById('card-container');
-                const btn = document.querySelector('.dl-btn');
-                btn.innerText = "⏳ 正在渲染高清原图，请稍候...";
+            // 实时缩放引擎：让 1080px 的卡片能完美塞进 Streamlit 的小框里预览
+            function fitPreview() {{
+                const wrapper = document.getElementById('preview-wrapper');
+                const card = document.getElementById('card-container');
                 
-                // 输出 scale 1.5 倍，生成 2100px 宽度的超清大图 (兼顾画质与生成速度)
-                const scale = 1.5; 
+                // 计算当前窗口与 1080 宽度的比例
+                const scale = wrapper.clientWidth / 1080;
+                
+                if (scale < 1) {{
+                    card.style.transform = `scale($scale)`;
+                    // 同步缩小外壳高度，防止下方留白
+                    wrapper.style.height = (card.offsetHeight * scale) + 'px';
+                }} else {{
+                    card.style.transform = 'none';
+                    wrapper.style.height = card.offsetHeight + 'px';
+                }}
+            }}
 
-                domtoimage.toPng(node, {{
-                    width: node.offsetWidth * scale,
-                    height: node.offsetHeight * scale,
+            window.onload = fitPreview;
+            window.onresize = fitPreview;
+
+            function downloadCard() {{
+                const card = document.getElementById('card-container');
+                const btn = document.querySelector('.dl-btn');
+                
+                btn.innerText = "⏳ 正在提取精准尺寸，渲染中...";
+                
+                // 【核心黑科技】：拍照前，先剥离所有预览缩放效果，获取卡片真实的物理高度
+                card.style.transform = 'none';
+                
+                // 此时，offsetHeight 就是文字正好把卡片撑满的高度！一丝白边都没有！
+                const exactWidth = 1080;
+                const exactHeight = card.offsetHeight; 
+
+                // 导出系数：1.5 倍（即 1620px 宽度的高清图，兼顾清晰度与文件大小）
+                const exportScale = 1.5;
+
+                domtoimage.toPng(card, {{
+                    width: exactWidth * exportScale,
+                    height: exactHeight * exportScale,
                     style: {{
-                        transform: 'scale(' + scale + ')',
-                        transformOrigin: 'top left'
+                        transform: `scale($exportScale)`,
+                        transformOrigin: 'top left',
+                        width: exactWidth + 'px',
+                        height: exactHeight + 'px',
+                        margin: 0
                     }},
                     bgcolor: '#ffffff'
                 }})
                 .then(function (dataUrl) {{
                     const link = document.createElement('a');
-                    link.download = '{clean_title}_杂志排版.png';
+                    link.download = '{clean_title}_高清紧凑排版.png';
                     link.href = dataUrl;
                     link.click();
-                    btn.innerText = "📸 保存为 1400px 杂志级双栏长图";
                 }})
                 .catch(function (error) {{
                     console.error('图片生成错误:', error);
-                    btn.innerText = "❌ 生成失败，请重试";
-                    alert("截图生成失败，请稍后再试。");
+                    alert("生成失败，请重试");
+                }})
+                .finally(function() {{
+                    btn.innerText = "📸 保存为 1080px 高清双栏长图 (紧凑无白边)";
+                    // 拍照结束后，恢复界面的缩放预览
+                    fitPreview();
                 }});
             }}
         </script>
@@ -789,6 +805,5 @@ def render_html_card(title, content_md, source_tag):
     """
 
     import streamlit.components.v1 as comp
-    # 增加高度，给滚动预览窗留足空间
-    comp.html(html_template, height=850, scrolling=False)
+    comp.html(html_template, height=800, scrolling=True)
 
