@@ -493,7 +493,7 @@ def render_html_card(title, content_md, source_tag):
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&display=swap');
-            body {
+            body {{
                 background-color: #f0f2f6;
                 margin: 0;
                 padding: 20px;
@@ -505,7 +505,7 @@ def render_html_card(title, content_md, source_tag):
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
                 text-rendering: optimizeLegibility;
-            }
+            }}
             #card-container {{
                 width: 450px;
                 background: white;
@@ -605,7 +605,7 @@ def render_html_card(title, content_md, source_tag):
             function downloadCard() {{
                 const node = document.getElementById('card-container');
                 const btn = document.querySelector('.dl-btn');
-                btn.innerText = "⏳ 生成中...";
+                btn.innerText = "⏳ 生成中(超清图较慢)...";
                 html2canvas(node, {{
                     scale: 4, // 【修改这里】从 2 改为 4，直接生成 4x 超清分辨率，对抗推特压缩
                     useCORS: true,
