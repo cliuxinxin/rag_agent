@@ -374,7 +374,8 @@ def render_step_final():
     state = st.session_state.newsroom_state
     st.subheader("📰 最终成稿")
 
-    tab_text, tab_card = st.tabs(["📄 文字稿件", "🖼️ 生成知识卡片"])
+    # === [修改点 1]: 增加了一个名为 "🐦 生成 X (推特) Thread" 的 Tab ===
+    tab_text, tab_card, tab_twitter = st.tabs(["📄 文字稿件", "🖼️ 生成知识卡片", "🐦 生成 X (推特) Thread"])
 
     with tab_text:
         if state.get("critique_notes"):
@@ -436,6 +437,49 @@ def render_step_final():
             content_md=state["final_article"],
             source_tag="DeepSeek Newsroom",
         )
+
+    # === [修改点 2]: X Thread 生成逻辑 ===
+    with tab_twitter:
+        st.markdown("##### 🐦 X (Twitter) 连推生成器")
+        st.caption("💡 社交媒体传播利器：将深度长文自动拆解为适合 X (推特) 发布的 1/N 连推格式。")
+        
+        if st.button("🚀 一键转化为 Thread", type="primary", use_container_width=True):
+            from src.nodes.common import get_llm
+            from langchain_core.messages import HumanMessage
+            
+            with st.spinner("AI 正在提炼金句，重构文案..."):
+                try:
+                    llm = get_llm()
+                    prompt = f"""
+                    你是一个拥有百万粉丝的 X (Twitter) 科技与创投大V。
+                    请将下面的深度长篇文章，转化为适合 X 发布的 Thread（连推）。
+                    
+                    【爆款要求】：
+                    1. 黄金首推（1/N）：必须是极具吸引力的 Hook（钩子），一句话点破痛点或反常识结论，告诉读者这篇 Thread 值得阅读。
+                    2. 格式规范：按照 1/N, 2/N, 3/N 的编号格式进行段落拆分。
+                    3. 节奏感：每推字数保持短小精悍（控制在 150 字以内），适合碎片化快速阅读。
+                    4. 视觉排版：适当使用 Emoji 增加可读性（不要过多），并保留原文档中最核心的数据、引用和金句。
+                    5. 互动结尾：最后一推（N/N）进行全文总结，并加上互动引导（如：你同意这个观点吗？欢迎在评论区留言探讨）。
+                    
+                    【原文】：
+                    {state["final_article"]}
+                    """
+                    thread_result = llm.invoke([HumanMessage(content=prompt)]).content
+                    state["twitter_thread"] = thread_result
+                    st.rerun() # 刷新页面，显示生成结果
+                except Exception as e:
+                    st.error(f"生成 Thread 失败，请重试: {e}")
+                    
+        # 如果已经生成过，则直接展示
+        if state.get("twitter_thread"):
+            st.success("✅ Thread 生成完毕！")
+            st.info("💡 提示：将鼠标悬停在下方文本框右上角，点击“复制”按钮即可粘贴至 X 发布。")
+            st.text_area(
+                "Twitter Thread 内容", 
+                value=state["twitter_thread"], 
+                height=500,
+                label_visibility="collapsed"
+            )
 
 
 # 历史项目侧边栏
