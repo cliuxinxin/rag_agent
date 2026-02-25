@@ -567,7 +567,7 @@ def render_history_sidebar():
 
 
 def render_html_card(title, content_md, source_tag):
-    """生成 1920宽屏动态高度矩阵海报：完美预览，绝不截断"""
+    """极其稳定版：华尔街日报风格（顶栏报头 + 双栏排版），彻底解决崩溃与截断问题"""
     import markdown
     import re
 
@@ -583,225 +583,204 @@ def render_html_card(title, content_md, source_tag):
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&display=swap');
             body {{
-                background-color: #f0f2f6;
                 margin: 0;
-                padding: 20px;
+                padding: 0;
+                background-color: #f0f2f6;
+                font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
             }}
             
-            /* 预览包裹器：用来在有限的屏幕里等比缩小看海报全貌 */
-            #scale-wrapper {{
+            /* 控制栏：固定在最上方 */
+            .control-panel {{
                 width: 100%;
-                max-width: 1000px; /* 控制在 UI 里的最大宽度 */
-                overflow: hidden;
-                border-radius: 12px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-                background: #020617;
-                position: relative;
-                margin-bottom: 20px;
+                background: #ffffff;
+                padding: 15px 0;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+                text-align: center;
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                border-bottom: 1px solid #e2e8f0;
             }}
-
-            /* 真实海报容器：固定 1920 宽度，高度自动向下生长 */
-            #card-container {{
-                width: 1920px; 
-                min-height: 1080px; /* 至少保持 16:9 比例 */
-                height: max-content; /* 关键修复：字数多时自动拉长高度，不向右溢出 */
-                background: radial-gradient(circle at 10% 10%, #1e293b 0%, #020617 100%);
-                display: flex;
-                position: relative;
-                transform-origin: top left;
-                box-sizing: border-box;
-            }}
-
-            #poster-left {{
-                width: 600px;
-                padding: 80px 60px;
-                border-right: 1px solid rgba(255, 255, 255, 0.1);
-                display: flex;
-                flex-direction: column;
-                flex-shrink: 0; /* 左侧栏不被压缩 */
-            }}
-            .accent-bar {{
-                width: 80px;
-                height: 8px;
-                background: #00f0ff;
-                margin-bottom: 30px;
-                box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
-            }}
-            .card-tag {{
-                font-size: 18px;
-                text-transform: uppercase;
-                letter-spacing: 5px;
-                color: #00f0ff;
-                margin-bottom: 25px;
-                font-weight: bold;
-            }}
-            .card-title {{
-                font-family: 'Noto Serif SC', serif;
-                font-size: 56px;
-                font-weight: 900;
-                line-height: 1.3;
-                color: #f8fafc;
-                margin: 0;
-            }}
-            .card-meta {{
-                margin-top: auto;
-                font-size: 16px;
-                color: #64748b;
-                letter-spacing: 2px;
-                font-family: monospace;
-                text-transform: uppercase;
-                padding-top: 50px;
-            }}
-            .card-meta span {{ color: #e2e8f0; }}
-
-            #poster-right {{
-                flex-grow: 1;
-                padding: 80px 60px;
-            }}
-            
-            #article-content {{
-                column-count: 3; /* 改为 3 栏，阅读体验最佳 */
-                column-gap: 50px;
-                column-rule: 1px solid rgba(255, 255, 255, 0.1);
-                font-size: 20px; 
-                line-height: 1.8;
-                color: #cbd5e1;
-                text-align: justify;
-            }}
-            
-            #article-content h1, #article-content h2, #article-content h3 {{
-                color: #f8fafc;
-                font-size: 26px;
-                margin-top: 0;
-                margin-bottom: 20px;
-                border-left: 5px solid #00f0ff;
-                padding-left: 15px;
-                break-after: avoid;
-                page-break-after: avoid;
-            }}
-            #article-content p {{
-                margin-bottom: 25px;
-            }}
-            #article-content blockquote {{
-                margin: 0 0 25px 0;
-                padding: 20px;
-                background: rgba(0, 240, 255, 0.05);
-                border-left: 4px solid #00f0ff;
-                color: #94a3b8;
-                font-style: italic;
-                break-inside: avoid;
-            }}
-
             .dl-btn {{
-                width: 100%;
-                max-width: 800px;
-                padding: 16px 32px;
+                padding: 14px 30px;
                 background: #0f172a;
-                color: #00f0ff;
-                border: 2px solid #00f0ff;
+                color: #38bdf8;
+                border: 2px solid #0f172a;
                 border-radius: 8px;
                 font-size: 16px;
                 font-weight: bold;
                 cursor: pointer;
-                box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+                box-shadow: 0 4px 15px rgba(15, 23, 42, 0.2);
                 transition: all 0.2s;
-                text-transform: uppercase;
-                letter-spacing: 2px;
+                letter-spacing: 1px;
             }}
-            .dl-btn:hover {{ 
-                background: #00f0ff; 
+            .dl-btn:hover {{
+                background: #38bdf8;
                 color: #0f172a;
+                border-color: #38bdf8;
+            }}
+
+            /* 预览视窗：自带滚动条，保证不崩溃 */
+            #preview-window {{
+                width: 100%;
+                height: 700px;
+                overflow: auto;
+                padding: 40px 0;
+                background: #e2e8f0;
+                box-sizing: border-box;
+            }}
+
+            /* 真实海报本体 */
+            #card-container {{
+                width: 1400px; /* 固定的宽幅尺寸 */
+                height: max-content; /* 核心：高度自动向下生长，绝不截断 */
+                margin: 0 auto;
+                background: #ffffff;
+                box-shadow: 0 20px 50px rgba(0,0,0,0.15);
+                display: flex;
+                flex-direction: column;
+            }}
+
+            /* 顶部报头 */
+            .card-header {{
+                background: #0f172a;
+                color: white;
+                padding: 60px 80px;
+                text-align: center;
+                border-bottom: 8px solid #38bdf8;
+            }}
+            .card-tag {{
+                font-size: 16px;
+                text-transform: uppercase;
+                letter-spacing: 4px;
+                color: #38bdf8;
+                margin-bottom: 25px;
+                display: inline-block;
+                border: 1px solid rgba(56, 189, 248, 0.5);
+                padding: 6px 16px;
+                border-radius: 4px;
+            }}
+            .card-title {{
+                font-family: 'Noto Serif SC', serif;
+                font-size: 52px;
+                font-weight: 900;
+                line-height: 1.35;
+                margin: 0 auto;
+                max-width: 1100px;
+                color: #f8fafc;
+            }}
+
+            /* 双栏正文区 */
+            .card-body {{
+                padding: 70px 80px;
+                background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+                background-size: 30px 30px;
+                
+                /* 核心魔法：完美双栏 */
+                column-count: 2;
+                column-gap: 80px;
+                column-rule: 1px solid #e2e8f0;
+                
+                color: #334155;
+                font-size: 22px;
+                line-height: 1.85;
+                text-align: justify;
+            }}
+            
+            /* 防截断保护 */
+            .card-body h1, .card-body h2, .card-body h3 {{
+                color: #0f172a;
+                font-size: 28px;
+                margin-top: 0;
+                margin-bottom: 25px;
+                border-left: 6px solid #38bdf8;
+                padding-left: 15px;
+                break-after: avoid; 
+                page-break-after: avoid;
+            }}
+            .card-body p {{ 
+                margin-bottom: 25px; 
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }}
+            .card-body blockquote {{
+                margin: 0 0 25px 0;
+                padding: 20px 25px;
+                background: #f8fafc;
+                border-left: 4px solid #94a3b8;
+                color: #64748b;
+                font-style: italic;
+                font-size: 20px;
+                break-inside: avoid;
+            }}
+
+            /* 底部版权 */
+            .card-footer {{
+                background: #f1f5f9;
+                padding: 30px 80px;
+                text-align: center;
+                font-size: 16px;
+                color: #94a3b8;
+                border-top: 1px solid #e2e8f0;
+                letter-spacing: 2px;
+                font-family: monospace;
             }}
         </style>
     </head>
     <body>
-        <!-- 预览层 -->
-        <div id="scale-wrapper">
-            <!-- 真实海报层 -->
+        <!-- 悬浮的下载按钮区 -->
+        <div class="control-panel">
+            <button class="dl-btn" onclick="downloadCard()">📸 保存为 1400px 杂志级双栏长图</button>
+        </div>
+        
+        <!-- 原生滚动预览区：告别 JS 崩溃 -->
+        <div id="preview-window">
             <div id="card-container">
-                <div id="poster-left">
-                    <div>
-                        <div class="accent-bar"></div>
-                        <div class="card-tag">{source_tag}</div>
-                        <h1 class="card-title">{title}</h1>
-                    </div>
-                    <div class="card-meta">
-                        AI Generated Analysis <br><span>DeepSeek RAG Pro</span><br><br>
-                        Matrix Layout <br><span>Dynamic Panoramic</span>
-                    </div>
+                <div class="card-header">
+                    <span class="card-tag">{source_tag}</span>
+                    <h1 class="card-title">{title}</h1>
                 </div>
-                
-                <div id="poster-right">
-                    <div id="article-content">
-                        {html_content}
-                    </div>
+                <div class="card-body">
+                    {html_content}
+                </div>
+                <div class="card-footer">
+                    DEEPSEEK RAG PRO · EDITORIAL DESIGN
                 </div>
             </div>
         </div>
-        
-        <button class="dl-btn" onclick="downloadCard()">📸 保存为 1920宽屏极客海报 (支持长文)</button>
-        
+
         <script>
-            // 计算缩小比例，让 1920px 的巨大海报完美显示在小屏幕里
-            function fitPreview() {{
-                const wrapper = document.getElementById('scale-wrapper');
-                const container = document.getElementById('card-container');
-                const scale = wrapper.clientWidth / 1920;
-                
-                // 将真实的 container 等比缩小
-                container.style.transform = `scale($scale)`;
-                // 动态调整外框的高度，包住缩小后的 container
-                wrapper.style.height = (container.offsetHeight * scale) + 'px';
-            }}
-
-            // 页面加载和窗口大小改变时调整预览
-            window.onload = fitPreview;
-            window.onresize = fitPreview;
-
             function downloadCard() {{
+                const node = document.getElementById('card-container');
                 const btn = document.querySelector('.dl-btn');
-                const wrapper = document.getElementById('scale-wrapper');
-                const container = document.getElementById('card-container');
+                btn.innerText = "⏳ 正在渲染高清原图，请稍候...";
                 
-                btn.innerText = "⏳ 正在渲染原画 (如文章极长可能需要数秒)...";
+                // 输出 scale 1.5 倍，生成 2100px 宽度的超清大图 (兼顾画质与生成速度)
+                const scale = 1.5; 
 
-                // 【核心操作】导出前：移除所有缩小特效，让容器恢复 1920px 满血物理分辨率
-                container.style.transform = 'none';
-                wrapper.style.height = 'auto';
-                wrapper.style.overflow = 'visible';
-
-                // 生成 2 倍率（即 3840 像素的超高清 4K 图）
-                const scale = 2;
-
-                domtoimage.toPng(container, {{
-                    width: container.offsetWidth * scale,
-                    height: container.offsetHeight * scale,
+                domtoimage.toPng(node, {{
+                    width: node.offsetWidth * scale,
+                    height: node.offsetHeight * scale,
                     style: {{
-                        transform: `scale($scale)`,
-                        transformOrigin: 'top left',
-                        margin: 0
+                        transform: 'scale(' + scale + ')',
+                        transformOrigin: 'top left'
                     }},
-                    bgcolor: '#020617'
+                    bgcolor: '#ffffff'
                 }})
                 .then(function (dataUrl) {{
                     const link = document.createElement('a');
-                    link.download = '{clean_title}_黑客全景海报.png';
+                    link.download = '{clean_title}_杂志排版.png';
                     link.href = dataUrl;
                     link.click();
+                    btn.innerText = "📸 保存为 1400px 杂志级双栏长图";
                 }})
                 .catch(function (error) {{
-                    console.error('Error:', error);
-                    alert("渲染失败，请检查浏览器控制台");
-                }})
-                .finally(function() {{
-                    // 导出后：恢复预览时的缩小状态
-                    btn.innerText = "📸 保存为 1920宽屏极客海报 (支持长文)";
-                    wrapper.style.overflow = 'hidden';
-                    fitPreview();
+                    console.error('图片生成错误:', error);
+                    btn.innerText = "❌ 生成失败，请重试";
+                    alert("截图生成失败，请稍后再试。");
                 }});
             }}
         </script>
@@ -810,5 +789,6 @@ def render_html_card(title, content_md, source_tag):
     """
 
     import streamlit.components.v1 as comp
-    comp.html(html_template, height=800, scrolling=True)
+    # 增加高度，给滚动预览窗留足空间
+    comp.html(html_template, height=850, scrolling=False)
 
