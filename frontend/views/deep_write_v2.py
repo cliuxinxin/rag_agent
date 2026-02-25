@@ -438,48 +438,83 @@ def render_step_final():
             source_tag="DeepSeek Newsroom",
         )
 
-    # === [修改点 2]: X Thread 生成逻辑 ===
+    # === [修改点 2]: X Thread 终极免流汗发布方案 ===
     with tab_twitter:
-        st.markdown("##### 🐦 X (Twitter) 连推生成器")
-        st.caption("💡 社交媒体传播利器：将深度长文自动拆解为适合 X (推特) 发布的 1/N 连推格式。")
+        st.markdown("##### 🐦 X (Twitter) 发布生成器")
+        st.caption("💡 拒绝手动粘贴 15 次！我们为您提供【一键排版工具流】或【蓝V长推文】方案。")
         
-        if st.button("🚀 一键转化为 Thread", type="primary", use_container_width=True):
+        # 让用户选择他们想要的推特格式
+        twitter_mode = st.radio(
+            "选择你的发布模式：",
+            ["🧵 普通用户 Thread 模式 (配合 Typefully 一键发布)", "💎 X Premium (蓝V) 长推模式 (单条直发)"],
+            horizontal=True
+        )
+        
+        if st.button("🚀 生成推特专属文案", type="primary", use_container_width=True):
             from src.nodes.common import get_llm
             from langchain_core.messages import HumanMessage
             
-            with st.spinner("AI 正在提炼金句，重构文案..."):
+            with st.spinner("AI 正在重构文案，适配推特生态..."):
                 try:
                     llm = get_llm()
-                    prompt = f"""
-                    你是一个拥有百万粉丝的 X (Twitter) 科技与创投大V。
-                    请将下面的深度长篇文章，转化为适合 X 发布的 Thread（连推）。
                     
-                    【爆款要求】：
-                    1. 黄金首推（1/N）：必须是极具吸引力的 Hook（钩子），一句话点破痛点或反常识结论，告诉读者这篇 Thread 值得阅读。
-                    2. 格式规范：按照 1/N, 2/N, 3/N 的编号格式进行段落拆分。
-                    3. 节奏感：每推字数保持短小精悍（控制在 150 字以内），适合碎片化快速阅读。
-                    4. 视觉排版：适当使用 Emoji 增加可读性（不要过多），并保留原文档中最核心的数据、引用和金句。
-                    5. 互动结尾：最后一推（N/N）进行全文总结，并加上互动引导（如：你同意这个观点吗？欢迎在评论区留言探讨）。
-                    
-                    【原文】：
-                    {state["final_article"]}
-                    """
+                    if "Thread" in twitter_mode:
+                        # 针对排版工具（如 Typefully）优化的 Prompt
+                        prompt = f"""
+                        你是一个拥有百万粉丝的 X (Twitter) 科技大V。请将下文转化为适合 X 发布的 Thread（连推）。
+                        
+                        【排版工具专用格式要求】：
+                        1. 首推极具吸引力，一句话点破痛点。按照 1/N, 2/N 进行编号。
+                        2. 每推控制在 140 个中文字符以内。
+                        3. 【最核心指令】：为了让排版工具自动识别，每条推文之间，必须且只能使用连续的四个换行符（即空三行）隔开！不要使用 --- 或其他特殊符号。
+                        
+                        【原文】：
+                        {state["final_article"]}
+                        """
+                    else:
+                        # 针对推特蓝V长推文（Long Tweet）优化的 Prompt
+                        prompt = f"""
+                        你是一个拥有百万粉丝的 X (Twitter) 科技大V。请将下文转化为一篇【超长推文 (Long Tweet)】。
+                        
+                        【长推文要求】：
+                        1. 不需要切分成多个帖子，这是一篇完整的长文。
+                        2. 第一段必须是极具吸引力的 Hook，让人忍不住点击“展开阅读 (Show more)”。
+                        3. 巧用 Emoji 作为项目符号，多用短句、多换行，确保在手机屏幕上阅读不累。
+                        4. 提取原文最核心的金句和数据，去掉啰嗦的过渡语。
+                        5. 结尾加上互动引导，如：你对这事怎么看？评论区见。
+                        
+                        【原文】：
+                        {state["final_article"]}
+                        """
+                        
                     thread_result = llm.invoke([HumanMessage(content=prompt)]).content
                     state["twitter_thread"] = thread_result
-                    st.rerun() # 刷新页面，显示生成结果
+                    st.rerun() 
                 except Exception as e:
-                    st.error(f"生成 Thread 失败，请重试: {e}")
+                    st.error(f"生成文案失败，请重试: {e}")
                     
-        # 如果已经生成过，则直接展示
+        # 结果展示区
         if state.get("twitter_thread"):
-            st.success("✅ Thread 生成完毕！")
-            st.info("💡 提示：将鼠标悬停在下方文本框右上角，点击“复制”按钮即可粘贴至 X 发布。")
-            st.text_area(
-                "Twitter Thread 内容", 
-                value=state["twitter_thread"], 
-                height=500,
-                label_visibility="collapsed"
-            )
+            st.success("✅ 推特文案生成完毕！")
+            
+            if "Thread" in twitter_mode:
+                st.info(
+                    "💡 **终极省力发布指南 (只需粘贴 1 次)**：\n"
+                    "1. 将鼠标悬停在下方代码框右上角，点击【Copy】复制全部文本。\n"
+                    "2. 点击下方蓝色按钮，打开 **Typefully**（免费的顶级推特排版工具）。\n"
+                    "3. 在 Typefully 的输入框中 `Ctrl+V` 粘贴，它会瞬间自动帮你切分成十几个推文，点击 Tweet 一键发送全部！"
+                )
+                # 使用 st.code 渲染，自带极简的一键复制按钮，并且保留严格的换行符
+                st.code(state["twitter_thread"], language="markdown")
+                st.link_button("🚀 前往 Typefully 极速发推", "https://typefully.com/new", type="primary", use_container_width=True)
+                
+            else:
+                st.info("💡 **长推模式**：你选择了蓝V专享格式。只需点击右上角复制，直接在推特发布单条长推文即可！")
+                st.code(state["twitter_thread"], language="markdown")
+                # 长推模式直接唤起官方的单条发推接口
+                import urllib.parse
+                encoded_tweet = urllib.parse.quote(state["twitter_thread"])
+                st.link_button("↗️ 唤起推特网页版直接发布", f"https://twitter.com/intent/tweet?text={encoded_tweet}", type="primary", use_container_width=True)
 
 
 # 历史项目侧边栏
