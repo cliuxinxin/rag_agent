@@ -255,7 +255,12 @@ def get_final_polisher_prompt(full_draft: str, critique_notes: str) -> str:
     {critique_notes}
     
     请作为金牌润色师，根据意见对初稿进行**全文重写或精修**。
-    Output最终成稿（Markdown format）。标题要足够吸引人。
+    
+    【严厉警告/输出格式限制】
+    1. Output 最终成稿（Markdown 格式），标题要足够吸引人。
+    2. **绝对不要**在最终成稿中包含、附带或提及任何【主编意见】！
+    3. **绝对不要**输出任何诸如"根据主编意见修改如下"、"好的"、"以下是修改后的文章"等废话！
+    4. 你的输出内容将直接发送给读者，因此必须**只包含文章正文本身**！
     """
 
 
