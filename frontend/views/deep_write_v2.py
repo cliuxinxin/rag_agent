@@ -567,7 +567,7 @@ def render_history_sidebar():
 
 
 def render_html_card(title, content_md, source_tag):
-    """基于 HTML + dom-to-image-more 生成知识卡片，实现原生级字体清晰度"""
+    """生成多栏排版（报纸/杂志风格）的全长图，包含全文且大幅优化长宽比"""
     import markdown
     import re
 
@@ -582,132 +582,136 @@ def render_html_card(title, content_md, source_tag):
         <!-- 【更改核心】弃用 html2canvas，改用 dom-to-image-more，原生 SVG 渲染字体绝对清晰 -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image-more/3.1.6/dom-to-image-more.min.js"></script>
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&display=swap');
             body {{
                 background-color: #f0f2f6;
                 margin: 0;
-                padding: 20px;
+                padding: 40px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                /* 强制使用系统最高质量字体组合 */
-                font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+                font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
-                text-rendering: optimizeLegibility;
             }}
             #card-container {{
-                width: 480px; /* 稍微加宽一点，排版更好看 */
-                background: white;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-                overflow: hidden;
+                /*🌟核心：采用横向宽幅设计（1200像素宽），类似展开的报纸 */
+                width: 1200px;
+                background: #fdfdfc; /*微微的纸张暖白色 */
+                box-shadow: 0 20px 40px rgba(0,0,0,0.15);
                 position: relative;
+                display: flex;
+                flex-direction: column;
+                /*高度不设限，让内容自动撑开 */
             }}
             .card-header {{
-                background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%);
+                background: #1e293b;
                 color: white;
-                padding: 40px 30px;
-                position: relative;
+                padding: 60px 50px;
+                text-align: center;
+                border-bottom: 8px solid #3b82f6;
             }}
             .card-tag {{
-                font-size: 11px;
+                font-size: 14px;
                 text-transform: uppercase;
-                letter-spacing: 2px;
-                opacity: 0.9;
-                margin-bottom: 12px;
-                border: 1px solid rgba(255,255,255,0.4);
-                display: inline-block;
-                padding: 4px 10px;
-                border-radius: 20px;
+                letter-spacing: 4px;
+                opacity: 0.8;
+                margin-bottom: 20px;
+                display: block;
             }}
             .card-title {{
-                font-family: 'Noto Serif SC', "Microsoft YaHei", serif;
-                font-size: 28px;
-                font-weight: 700;
-                line-height: 1.4;
-                margin: 0;
-                text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                font-family: 'Noto Serif SC', serif;
+                font-size: 46px;
+                font-weight: 900;
+                line-height: 1.3;
+                margin: 0 auto;
+                max-width: 1000px;
             }}
             .card-body {{
-                padding: 35px 30px;
-                color: #2c3e50;
-                font-size: 15px;
+                padding: 60px 50px;
+                color: #334155;
+                font-size: 18px;
                 line-height: 1.8;
                 text-align: justify;
-                background-image: radial-gradient(#f0f0f0 1px, transparent 1px);
-                background-size: 20px 20px;
-                background-color: #fff;
+                        
+                /*🌟核心魔法：全自动三栏排版 */
+                column-count: 3;
+                column-gap: 60px;
+                column-rule: 1px solid #cbd5e1; /*栏之间的分割竖线 */
             }}
-            .card-body h1, .card-body h2 {{
-                font-size: 18px;
-                color: #1a252f;
-                margin-top: 25px;
-                margin-bottom: 15px;
-                border-left: 4px solid #4ca1af;
-                padding-left: 12px;
+                    
+            /*防标题和段落被从中间腰斩分割到两栏 */
+            .card-body h1, .card-body h2, .card-body h3 {{
+                font-size: 22px;
+                color: #0f172a;
+                margin-top: 0;
+                margin-bottom: 20px;
+                border-bottom: 2px solid #3b82f6;
+                padding-bottom: 8px;
+                break-after: avoid; 
+                page-break-after: avoid;
             }}
-            .card-body h3 {{ font-size: 16px; color: #333; margin-top: 15px; }}
-            .card-body p {{ margin-bottom: 15px; }}
-            .card-body strong {{ color: #000; font-weight: 700; }}
-            .card-body ul, .card-body ol {{ padding-left: 20px; margin-bottom: 15px; }}
-            .card-body li {{ margin-bottom: 8px; }}
+            .card-body p {{ 
+                margin-bottom: 20px; 
+                break-inside: avoid; /*尽量保持在同一栏内 */
+                page-break-inside: avoid;
+            }}
             .card-body blockquote {{
-                margin: 0 0 15px 0;
-                padding: 10px 15px;
-                background-color: #f8f9fa;
-                border-left: 4px solid #cbd5e1;
-                color: #64748b;
+                margin: 0 0 20px 0;
+                padding: 15px 20px;
+                background: #f1f5f9;
+                border-left: 4px solid #94a3b8;
                 font-style: italic;
+                break-inside: avoid;
             }}
             .card-footer {{
                 background: #f8f9fa;
-                padding: 20px 30px;
+                padding: 25px 50px;
                 text-align: center;
-                font-size: 12px;
-                color: #94a3b8;
-                border-top: 1px dashed #e2e8f0;
+                font-size: 14px;
+                color: #64748b;
+                border-top: 1px solid #e2e8f0;
+                font-family: monospace;
+                letter-spacing: 1px;
             }}
             .dl-btn {{
-                margin-top: 25px;
-                padding: 14px 28px;
-                background: #ef4444;
+                margin-top: 30px;
+                padding: 16px 32px;
+                background: #3b82f6;
                 color: white;
                 border: none;
                 border-radius: 50px;
-                font-size: 15px;
+                font-size: 18px;
                 font-weight: bold;
                 cursor: pointer;
-                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
-                transition: transform 0.1s;
-                font-family: -apple-system, "Microsoft YaHei", sans-serif;
+                box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
             }}
-            .dl-btn:active {{ transform: scale(0.95); }}
-            .dl-btn:hover {{ background: #dc2626; }}
+            .dl-btn:hover {{ background: #2563eb; }}
         </style>
     </head>
     <body>
         <div id="card-container">
             <div class="card-header">
-                <div class="card-tag">{source_tag}</div>
-                <div class="card-title">{title}</div>
+                <span class="card-tag">{source_tag}</span>
+                <h1 class="card-title">{title}</h1>
             </div>
             <div class="card-body">
                 {html_content}
             </div>
             <div class="card-footer">
-                Powered by DeepSeek RAG Pro
+                DeepSeek Newsroom Pro · Automated Magazine Typesetting
             </div>
         </div>
-        <button class="dl-btn" onclick="downloadCard()">📸 保存为超清长图</button>
+        <button class="dl-btn" onclick="downloadCard()">📸 保存为杂志排版全文超清图</button>
         <script>
             function downloadCard() {{
                 const node = document.getElementById('card-container');
                 const btn = document.querySelector('.dl-btn');
-                btn.innerText = "⏳ 正在生成原画级图片...";
-                
-                // 设置 3 倍放大率，保证即使被微信/X平台压缩，文字依然锐利
-                const scale = 3; 
-
+                btn.innerText = "⏳渲中(多栏超清图较慢)...";
+                            
+                // 输出 scale 2倍即宽度 2400px 的 4K级超清图
+                const scale = 2; 
+            
                 domtoimage.toPng(node, {{
                     width: node.offsetWidth * scale,
                     height: node.offsetHeight * scale,
@@ -721,15 +725,14 @@ def render_html_card(title, content_md, source_tag):
                 }})
                 .then(function (dataUrl) {{
                     const link = document.createElement('a');
-                    link.download = '{clean_title}_知识卡片.png';
+                    link.download = '{clean_title}_杂志排版.png';
                     link.href = dataUrl;
                     link.click();
-                    btn.innerText = "📸 保存为超清长图";
+                    btn.innerText = "📸 保存为杂志排版全文超清图";
                 }})
                 .catch(function (error) {{
                     console.error('图片生成错误:', error);
                     btn.innerText = "❌ 生成失败";
-                    alert("图片生成失败，请检查浏览器控制台");
                 }});
             }}
         </script>
@@ -738,6 +741,5 @@ def render_html_card(title, content_md, source_tag):
     """
 
     import streamlit.components.v1 as comp
-    # 调高了 iframe 的高度，避免因为内容过长出现双重滚动条
-    comp.html(html_template, height=1200, scrolling=True)
+    comp.html(html_template, height=1000, scrolling=True)
 
