@@ -478,7 +478,7 @@ def render_history_sidebar():
 
 
 def render_html_card(title, content_md, source_tag):
-    """基于 HTML+html2canvas 生成知识卡片，避免中文乱码"""
+    """基于 HTML + dom-to-image-more 生成知识卡片，实现原生级字体清晰度"""
     import markdown
     import re
 
@@ -490,7 +490,8 @@ def render_html_card(title, content_md, source_tag):
     <html>
     <head>
         <meta charset="utf-8">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <!-- 【更改核心】弃用 html2canvas，改用 dom-to-image-more，原生 SVG 渲染字体绝对清晰 -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image-more/3.1.6/dom-to-image-more.min.js"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&display=swap');
             body {{
@@ -500,14 +501,14 @@ def render_html_card(title, content_md, source_tag):
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-                /* 增加以下三行抗锯齿优化，让文字更锐利 */
+                /* 强制使用系统最高质量字体组合 */
+                font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
                 text-rendering: optimizeLegibility;
             }}
             #card-container {{
-                width: 450px;
+                width: 480px; /* 稍微加宽一点，排版更好看 */
                 background: white;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.15);
                 overflow: hidden;
@@ -520,71 +521,79 @@ def render_html_card(title, content_md, source_tag):
                 position: relative;
             }}
             .card-tag {{
-                font-size: 10px;
+                font-size: 11px;
                 text-transform: uppercase;
                 letter-spacing: 2px;
-                opacity: 0.8;
-                margin-bottom: 10px;
+                opacity: 0.9;
+                margin-bottom: 12px;
                 border: 1px solid rgba(255,255,255,0.4);
                 display: inline-block;
-                padding: 2px 8px;
+                padding: 4px 10px;
                 border-radius: 20px;
             }}
             .card-title {{
                 font-family: 'Noto Serif SC', "Microsoft YaHei", serif;
-                font-size: 26px;
+                font-size: 28px;
                 font-weight: 700;
                 line-height: 1.4;
                 margin: 0;
                 text-shadow: 0 2px 4px rgba(0,0,0,0.2);
             }}
             .card-body {{
-                padding: 30px;
-                color: #333;
-                font-size: 14px;
+                padding: 35px 30px;
+                color: #2c3e50;
+                font-size: 15px;
                 line-height: 1.8;
                 text-align: justify;
-                background-image: radial-gradient(#e6e6e6 1px, transparent 1px);
+                background-image: radial-gradient(#f0f0f0 1px, transparent 1px);
                 background-size: 20px 20px;
                 background-color: #fff;
             }}
             .card-body h1, .card-body h2 {{
                 font-size: 18px;
-                color: #2c3e50;
-                margin-top: 20px;
-                margin-bottom: 10px;
+                color: #1a252f;
+                margin-top: 25px;
+                margin-bottom: 15px;
                 border-left: 4px solid #4ca1af;
-                padding-left: 10px;
+                padding-left: 12px;
             }}
-            .card-body h3 {{ font-size: 16px; color: #444; margin-top: 15px; }}
+            .card-body h3 {{ font-size: 16px; color: #333; margin-top: 15px; }}
             .card-body p {{ margin-bottom: 15px; }}
             .card-body strong {{ color: #000; font-weight: 700; }}
-            .card-body ul {{ padding-left: 20px; margin-bottom: 15px; }}
-            .card-body li {{ margin-bottom: 5px; }}
+            .card-body ul, .card-body ol {{ padding-left: 20px; margin-bottom: 15px; }}
+            .card-body li {{ margin-bottom: 8px; }}
+            .card-body blockquote {{
+                margin: 0 0 15px 0;
+                padding: 10px 15px;
+                background-color: #f8f9fa;
+                border-left: 4px solid #cbd5e1;
+                color: #64748b;
+                font-style: italic;
+            }}
             .card-footer {{
                 background: #f8f9fa;
-                padding: 15px 30px;
+                padding: 20px 30px;
                 text-align: center;
                 font-size: 12px;
-                color: #888;
-                border-top: 1px dashed #ddd;
+                color: #94a3b8;
+                border-top: 1px dashed #e2e8f0;
             }}
             .dl-btn {{
-                margin-top: 20px;
-                padding: 12px 24px;
-                background: #ff4b4b;
+                margin-top: 25px;
+                padding: 14px 28px;
+                background: #ef4444;
                 color: white;
                 border: none;
                 border-radius: 50px;
-                font-size: 14px;
+                font-size: 15px;
                 font-weight: bold;
                 cursor: pointer;
-                box-shadow: 0 4px 15px rgba(255, 75, 75, 0.3);
+                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
                 transition: transform 0.1s;
-                font-family: "Microsoft YaHei", sans-serif;
+                font-family: -apple-system, "Microsoft YaHei", sans-serif;
             }}
             .dl-btn:active {{ transform: scale(0.95); }}
-            .dl-btn:hover {{ background: #ff3333; }}
+            .dl-btn:hover {{ background: #dc2626; }}
         </style>
     </head>
     <body>
@@ -600,23 +609,38 @@ def render_html_card(title, content_md, source_tag):
                 Powered by DeepSeek RAG Pro
             </div>
         </div>
-        <button class="dl-btn" onclick="downloadCard()">📸 保存为图片</button>
+        <button class="dl-btn" onclick="downloadCard()">📸 保存为超清长图</button>
         <script>
             function downloadCard() {{
                 const node = document.getElementById('card-container');
                 const btn = document.querySelector('.dl-btn');
-                btn.innerText = "⏳ 生成中(超清图较慢)...";
-                html2canvas(node, {{
-                    scale: 4, // 【修改这里】从 2 改为 4，直接生成 4x 超清分辨率，对抗推特压缩
-                    useCORS: true,
-                    backgroundColor: "#ffffff",
-                    scrollY: 0
-                }}).then(canvas => {{
+                btn.innerText = "⏳ 正在生成原画级图片...";
+                
+                // 设置 3 倍放大率，保证即使被微信/X平台压缩，文字依然锐利
+                const scale = 3; 
+
+                domtoimage.toPng(node, {{
+                    width: node.offsetWidth * scale,
+                    height: node.offsetHeight * scale,
+                    style: {{
+                        transform: 'scale(' + scale + ')',
+                        transformOrigin: 'top left',
+                        width: node.offsetWidth + 'px',
+                        height: node.offsetHeight + 'px'
+                    }},
+                    bgcolor: '#ffffff'
+                }})
+                .then(function (dataUrl) {{
                     const link = document.createElement('a');
                     link.download = '{clean_title}_知识卡片.png';
-                    link.href = canvas.toDataURL("image/png", 1.0); // 强制最高质量 PNG
+                    link.href = dataUrl;
                     link.click();
-                    btn.innerText = "📸 保存为图片";
+                    btn.innerText = "📸 保存为超清长图";
+                }})
+                .catch(function (error) {{
+                    console.error('图片生成错误:', error);
+                    btn.innerText = "❌ 生成失败";
+                    alert("图片生成失败，请检查浏览器控制台");
                 }});
             }}
         </script>
@@ -624,5 +648,7 @@ def render_html_card(title, content_md, source_tag):
     </html>
     """
 
-    comp.html(html_template, height=800, scrolling=True)
+    import streamlit.components.v1 as comp
+    # 调高了 iframe 的高度，避免因为内容过长出现双重滚动条
+    comp.html(html_template, height=1200, scrolling=True)
 
