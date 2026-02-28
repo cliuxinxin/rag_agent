@@ -15,16 +15,31 @@ jobs:
           username: ${{ secrets.USERNAME }}   # 对应 opc 或 ubuntu
           key: ${{ secrets.KEY }}         # 对应刚才 cat id_rsa 复制的内容
           script: |
-            # 停止旧容器 (防止端口占用冲突)
-            cd /home/${{ secrets.USERNAME }}/rag_agent # ⚠️注意：请确认你的项目路径是否正确
+            cd /home/${{ secrets.USERNAME }}/rag_agent || { echo "目录不存在"; exit 1; }
             
-            # 1. 放弃所有本地未提交的修改
+            # 1. 自动识别架构并下载 Docker Compose V2 独立二进制文件
+            ARCH=$(uname -m)
+            if [ "$ARCH" = "aarch64" ]; then
+              DOCKER_CONFIG_ARCH="aarch64"
+            else
+              DOCKER_CONFIG_ARCH="x86_64"
+            fi
+            
+            # 如果本地还没有这个工具，则下载（2.24.5 是稳定版）
+            if [ ! -f "./docker-compose-v2" ]; then
+              echo "正在为 $ARCH 下载 Docker Compose V2..."
+              curl -SL "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-$DOCKER_CONFIG_ARCH" -o ./docker-compose-v2
+              chmod +x ./docker-compose-v2
+            fi
+
+            # 2. 强制同步代码
+            git fetch --all
             git reset --hard origin/main
-            # 2. 确保拉取到最新代码
-            git pull origin main --force
-            
-            # 重新构建并启动
-            docker-compose up -d --build --force-recreate
-            
-            # 清理垃圾镜像
+
+            # 3. 执行构建与启动
+            # 禁用 DOCKER_BUILDKIT 环境变量以确保最大兼容性，或者让 V2 自己处理
+            echo "开始执行容器构建..."
+            ./docker-compose-v2 up -d --build --force-recreate
+
+            # 4. 清理
             docker image prune -f
