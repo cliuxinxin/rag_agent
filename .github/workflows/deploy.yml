@@ -17,7 +17,7 @@ jobs:
           script: |
             cd /home/${{ secrets.USERNAME }}/rag_agent || { echo "目录不存在"; exit 1; }
             
-            # 1. 自动识别架构并下载 Docker Compose V2 独立二进制文件
+            # 1. 自动识别架构并下载 Docker Compose V2 (保持不变)
             ARCH=$(uname -m)
             if [ "$ARCH" = "aarch64" ]; then
               DOCKER_CONFIG_ARCH="aarch64"
@@ -25,9 +25,7 @@ jobs:
               DOCKER_CONFIG_ARCH="x86_64"
             fi
             
-            # 如果本地还没有这个工具，则下载（2.24.5 是稳定版）
             if [ ! -f "./docker-compose-v2" ]; then
-              echo "正在为 $ARCH 下载 Docker Compose V2..."
               curl -SL "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-$DOCKER_CONFIG_ARCH" -o ./docker-compose-v2
               chmod +x ./docker-compose-v2
             fi
@@ -36,10 +34,13 @@ jobs:
             git fetch --all
             git reset --hard origin/main
 
-            # 3. 执行构建与启动
-            # 禁用 DOCKER_BUILDKIT 环境变量以确保最大兼容性，或者让 V2 自己处理
-            echo "开始执行容器构建..."
+            # 3. 【新增：核心修复步】先停止并删除旧容器，清理命名冲突
+            echo "清理旧容器..."
+            ./docker-compose-v2 down --remove-orphans
+
+            # 4. 执行构建与启动
+            echo "开始执行容器构建与启动..."
             ./docker-compose-v2 up -d --build --force-recreate
 
-            # 4. 清理
+            # 5. 清理垃圾镜像
             docker image prune -f
