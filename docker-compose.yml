@@ -1,14 +1,47 @@
 version: '3.8'
 
 services:
-  deepseek-rag:
-    build: .
-    container_name: deepseek_rag_pro
+  # 后端服务 - FastAPI
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: rag_backend
     ports:
-      - "8000:8501"
+      - "8000:8000"
     volumes:
-      # 持久化知识库数据
+      # 持久化存储
       - ./storage:/app/storage
+      - ./backend/src:/app/src
+      - ./backend/skills:/app/skills
     env_file:
       - .env
+    environment:
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 前端服务 - Vue 3 + Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: rag_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
