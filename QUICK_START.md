@@ -64,6 +64,17 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+## 🔐 登录信息
+
+系统默认启用了 JWT 认证，默认管理员账号如下：
+
+- **用户名**: `admin`
+- **密码**: `admin123`
+
+> **提示**: 你可以通过设置环境变量 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 来修改默认凭据。
+
+---
+
 ## 🧪 步骤 3: 测试 API 接口
 
 ### 方式一：使用测试脚本（推荐）

@@ -8,7 +8,8 @@ export interface Message {
 export interface ChatStreamRequest {
   query: string
   session_id?: string
-  kb_ids?: number[]
+  // 这里直接使用知识库名称列表，后端会按名称加载 KB
+  kb_ids?: string[]
   mode?: 'chat' | 'deep_qa' | 'deep_read'
 }
 
@@ -70,7 +71,7 @@ export async function chatStream(
  * 获取会话消息历史
  */
 export async function getSessionMessages(sessionId: string): Promise<Message[]> {
-  const response = await apiClient.get(`/api/db/sessions/${sessionId}/messages`)
+  const response: any = await apiClient.get(`/api/db/sessions/${sessionId}/messages`)
   return response.messages || []
 }
 
@@ -78,14 +79,15 @@ export async function getSessionMessages(sessionId: string): Promise<Message[]> 
  * 创建新会话
  */
 export async function createSession(title: string, mode: string = 'chat'): Promise<{ session_id: string }> {
-  return await apiClient.post('/api/db/sessions', { title, mode })
+  const response: any = await apiClient.post('/api/db/sessions', { title, mode })
+  return response
 }
 
 /**
  * 获取所有会话列表
  */
 export async function getSessions(): Promise<any[]> {
-  const response = await apiClient.get('/api/db/sessions')
+  const response: any = await apiClient.get('/api/db/sessions')
   return response.sessions || []
 }
 
@@ -94,4 +96,12 @@ export async function getSessions(): Promise<any[]> {
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   await apiClient.delete(`/api/db/sessions/${sessionId}`)
+}
+
+/**
+ * 智能生成会话标题
+ */
+export async function generateSmartTitle(sessionId: string): Promise<{ title: string }> {
+  const response: any = await apiClient.post(`/api/db/sessions/${sessionId}/generate_title`)
+  return response
 }

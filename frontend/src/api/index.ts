@@ -35,6 +35,11 @@ apiClient.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           console.error('未授权，请重新登录')
+          localStorage.removeItem('token')
+          localStorage.removeItem('username')
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname)
+          }
           break
         case 403:
           console.error('拒绝访问')

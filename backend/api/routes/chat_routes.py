@@ -58,9 +58,6 @@ async def chat_stream(request: dict):
         "mode": mode,
     }
     
-    # 延迟导入 db 函数
-    from src.db import get_messages, create_session
-    
     async def event_generator():
         """SSE 事件生成器"""
         try:
@@ -109,6 +106,7 @@ async def get_session_messages(session_id: str):
     **返回:** 消息列表，包含角色和内容
     """
     try:
+        from src.db import get_messages
         messages = get_messages(session_id)
         return {"messages": messages}
     except Exception as e:
@@ -119,15 +117,56 @@ async def get_session_messages(session_id: str):
 async def create_new_session(title: str = Query(...), mode: str = Query("chat")):
     """
     创建新的对话会话
-    
-    **查询参数:**
-    - `title`: 会话标题
-    - `mode`: 会话模式 (chat|deep_qa|deep_read|...)
-    
-    **返回:** 新建的会话 ID
     """
     try:
-        session_id = create_session(title, mode)
+        from src.db import create_session as db_create_session
+        session_id = db_create_session(title, mode)
         return {"session_id": session_id, "status": "created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建会话失败：{str(e)}")
+
+
+@router.post("/sessions/{session_id}/generate_title", summary="智能生成并更新会话标题")
+async def generate_session_title(session_id: str):
+    """
+    根据会话的第一轮对话，自动生成简短标题并更新数据库。
+    """
+    try:
+        from src.db import get_messages, update_session_title
+        from src.nodes.common import get_llm
+        from langchain_core.messages import HumanMessage
+        
+        messages = get_messages(session_id)
+        if not messages or len(messages) < 2:
+            return {"status": "skipped", "reason": "Not enough messages"}
+            
+        user_query = messages[0]['content']
+        ai_response = messages[1]['content']
+        
+        llm = get_llm()
+        prompt = f"""
+        请根据以下对话内容，为一个聊天会话起一个极其简短的标题（不超过 10 个字）。
+        只需输出标题文字，不要有任何标点符号或前缀。
+        
+        用户：{user_query}
+        助手：{ai_response[:200]}...
+        """
+        
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        smart_title = response.content.strip().replace('"', '').replace("'", "")
+        
+        update_session_title(session_id, smart_title)
+        return {"status": "updated", "title": smart_title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成标题失败：{str(e)}")
+
+
+@router.delete("/sessions/{session_id}", summary="删除会话")
+async def delete_session(session_id: str):
+    """删除指定会话及其所有消息"""
+    try:
+        from src.db import delete_session as db_delete_session
+        db_delete_session(session_id)
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除会话失败：{str(e)}")

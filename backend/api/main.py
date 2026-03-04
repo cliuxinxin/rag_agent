@@ -12,7 +12,10 @@ project_root = os.path.join(os.path.dirname(__file__), '..')
 sys.path.insert(0, project_root)
 
 # 导入路由模块
-from api.routes import chat_routes, db_routes, read_routes, ppt_routes
+from api.routes import chat_routes, db_routes, read_routes, ppt_routes, kb_routes, write_routes, log_routes, mastery_routes, skill_routes, auth_routes, qa_routes
+# 数据库初始化
+from src.db import init_db
+from fastapi.staticfiles import StaticFiles
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -20,6 +23,12 @@ app = FastAPI(
     description="基于 LangGraph 和 DeepSeek 的 RAG 系统 API",
     version="1.0.0"
 )
+
+# 挂载静态资源目录 (用于 Skill Agent 生成的图表等)
+skills_static_path = os.path.join(project_root, 'skills')
+if not os.path.exists(skills_static_path):
+    os.makedirs(skills_static_path)
+app.mount("/static/skills", StaticFiles(directory=skills_static_path), name="skills")
 
 # CORS 配置 - 允许前端跨域访问
 app.add_middleware(
@@ -51,6 +60,13 @@ app.include_router(chat_routes.router, prefix="/api/chat", tags=["聊天"])
 app.include_router(db_routes.router, prefix="/api/db", tags=["数据库"])
 app.include_router(read_routes.router, prefix="/api/read", tags=["深度阅读"])
 app.include_router(ppt_routes.router, prefix="/api/ppt", tags=["PPT 生成"])
+app.include_router(kb_routes.router, prefix="/api/kb", tags=["知识库"])
+app.include_router(write_routes.router, prefix="/api/write", tags=["深度写作"])
+app.include_router(log_routes.router, prefix="/api/log", tags=["日志系统"])
+app.include_router(mastery_routes.router, prefix="/api/mastery", tags=["深度掌握"])
+app.include_router(skill_routes.router, prefix="/api/skill", tags=["技能智能体"])
+app.include_router(auth_routes.router, prefix="/api/auth", tags=["用户认证"])
+app.include_router(qa_routes.router, prefix="/api/qa", tags=["深度追问"])
 
 # 健康检查接口
 @app.get("/health", summary="健康检查")
@@ -77,6 +93,16 @@ async def root():
 async def startup_event():
     """应用启动时执行的初始化"""
     print("=" * 60)
+    print("🚀 RAG Agent API 启动中...")
+
+    # 初始化数据库（幂等）
+    try:
+        print("🔨 正在检查/初始化数据库...")
+        init_db()
+        print("✅ 数据库初始化完成")
+    except Exception as e:
+        print(f"❌ 数据库初始化失败: {e}")
+
     print("🚀 RAG Agent API 启动成功!")
     print("📌 API 文档：http://localhost:8000/docs")
     print("📌 ReDoc: http://localhost:8000/redoc")

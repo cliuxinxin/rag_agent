@@ -16,6 +16,8 @@ def save_all_code(base_dir, include_deploy=True):
     deploy_files = {"Dockerfile", "docker-compose.yml", "deploy.yml"}
     config_extensions = {".yaml", ".yml", ".json", ".toml"}
     md_files = {"README.md", "MIGRATION_PLAN.md", "QUICK_START.md", "MIGRATION_PROGRESS.md"}
+    # 前端代码扩展名（Vue / TS / JS）
+    frontend_extensions = {".vue", ".ts", ".tsx", ".js", ".jsx"}
     
     with open(output_path, "w", encoding="utf-8") as out:
         for root, dirs, files in os.walk(base_dir):
@@ -24,7 +26,7 @@ def save_all_code(base_dir, include_deploy=True):
                 dirs.remove("venv")
             
             # 跳过一些不需要的目录
-            skip_dirs = {"__pycache__", ".git", ".langgraph_api", "logs", "storage", ".qoder"}
+            skip_dirs = {"__pycache__", ".git", ".langgraph_api", "logs", "storage", ".qoder", "node_modules"}
             dirs[:] = [d for d in dirs if d not in skip_dirs]
 
             for fname in files:
@@ -33,6 +35,10 @@ def save_all_code(base_dir, include_deploy=True):
                 
                 # Python 文件
                 if fname.endswith(".py"):
+                    should_include = True
+                
+                # 前端代码（限定在 frontend 目录下）
+                elif any(fname.endswith(ext) for ext in frontend_extensions) and "frontend" in root:
                     should_include = True
                 
                 # 部署相关文件
@@ -45,7 +51,7 @@ def save_all_code(base_dir, include_deploy=True):
                 
                 # Markdown 文档（新增）
                 elif fname in md_files:
-                    should_include = True
+                    should_include = False
                 
                 # 其他配置文件（可选）
                 elif include_deploy and any(fname.endswith(ext) for ext in config_extensions):

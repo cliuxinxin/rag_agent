@@ -6,7 +6,7 @@ import time
 import random
 # [新增] 引入 faiss 读取索引信息
 import faiss
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Callable
 from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
@@ -15,11 +15,33 @@ from src.logger import get_logger
 
 logger = get_logger("Storage")
 
-STORAGE_DIR = Path("storage")
+# 将知识库存储目录固定在项目根目录下的 storage，避免不同工作目录导致路径不一致
+SRC_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = SRC_DIR.parent
+STORAGE_DIR = PROJECT_ROOT / "storage"
 STORAGE_DIR.mkdir(exist_ok=True)
 
 def list_kbs() -> List[str]:
     return [f.stem for f in STORAGE_DIR.glob("*.json")]
+
+
+def _read_kb_json(kb_name: str) -> List[Dict]:
+    """
+    读取指定知识库的 JSON 数据。
+    仅在本模块内部复用，避免到处重复打开文件的逻辑。
+    """
+    json_path = STORAGE_DIR / f"{kb_name}.json"
+    if not json_path.exists():
+        return []
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.error(f"读取知识库 {kb_name} JSON 失败: {e}", exc_info=True)
+    return []
+
 
 def get_kb_details(kb_name: str) -> Dict:
     """
@@ -40,25 +62,22 @@ def get_kb_details(kb_name: str) -> Dict:
     }
     
     # 1. 读取 JSON (元数据层)
-    if json_path.exists():
-        with open(json_path, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-                info["doc_count"] = len(data)
-                for idx, item in enumerate(data):
-                    content = item.get("page_content", "")
-                    meta = item.get("metadata", {})
-                    info["total_chars"] += len(content)
-                    if "language" in meta:
-                        info["languages"].add(meta["language"])
-                    
-                    if idx < 3:  # 预览前3条即可
-                        info["preview"].append({
-                            "content": content[:100] + "..." if len(content) > 100 else content,
-                            "source": meta.get("source", "unknown")
-                        })
-            except Exception as e:
-                print(f"JSON读取错误: {e}")
+    data = _read_kb_json(kb_name)
+    info["doc_count"] = len(data)
+    for idx, item in enumerate(data):
+        content = item.get("page_content", "")
+        meta = item.get("metadata", {})
+        info["total_chars"] += len(content)
+        if "language" in meta:
+            info["languages"].add(meta["language"])
+
+        if idx < 3:  # 预览前3条即可
+            info["preview"].append(
+                {
+                    "content": content[:100] + "..." if len(content) > 100 else content,
+                    "source": meta.get("source", "unknown"),
+                }
+            )
 
     # 2. 读取 FAISS (物理存储层)
     if faiss_index_path.exists():
@@ -90,10 +109,10 @@ def get_kb_details(kb_name: str) -> Dict:
     info["languages"] = list(info["languages"])
     return info
 
-def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese", progress_bar=None):
+def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese", progress_callback: Callable[[int, int], None] = None):
     """
-    保存知识库，支持进度条回调。
-    progress_bar: Streamlit 的进度条对象 (st.progress)
+    保存知识库，支持进度回调。
+    progress_callback: 回调函数，接受 (current, total)
     """
     # 1. JSON 处理
     json_path = STORAGE_DIR / f"{kb_name}.json"
@@ -115,16 +134,14 @@ def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese", p
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(serialized_data, f, ensure_ascii=False, indent=2)
 
-    # 2. FAISS 向量处理 (带进度条)
+    # 2. FAISS 向量处理 (带进度回调)
     vector_path = STORAGE_DIR / f"{kb_name}_faiss"
     embeddings = HunyuanEmbeddings() 
 
-    # 定义回调函数更新 UI
-    def _update_progress(current, total):
-        if progress_bar:
-            # 计算百分比 0.0 -> 1.0
-            percent = min(current / total, 1.0)
-            progress_bar.progress(percent, text=f"正在向量化: {current}/{total}")
+    # 定义内部回调
+    def _internal_callback(current, total):
+        if progress_callback:
+            progress_callback(current, total)
 
     # 提取文本进行向量化
     print(f"开始向量化 {len(new_docs)} 个片段...")
@@ -132,7 +149,7 @@ def save_kb(kb_name: str, new_docs: List[Document], language: str = "Chinese", p
     metadatas = [d.metadata for d in new_docs]
     
     # 并发生成向量
-    raw_embeddings = embeddings.embed_documents(texts, progress_callback=_update_progress)
+    raw_embeddings = embeddings.embed_documents(texts, progress_callback=_internal_callback)
     
     # === 关键修复：清洗数据 ===
     # 剔除掉那些因为 API 错误变成 None 或 [] 的向量
@@ -200,7 +217,7 @@ def delete_kb(kb_name: str):
     vector_path = STORAGE_DIR / f"{kb_name}_faiss"
     if vector_path.exists(): shutil.rmtree(vector_path)
 
-def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -> Tuple[int, int]:
+def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_callback: Callable[[int, int], None] = None) -> Tuple[int, int]:
     """
     断点续传核心逻辑：
     1. 读取 JSON 获取总任务量
@@ -251,8 +268,8 @@ def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -
     remaining_docs = all_docs[current_count:]
     logger.info(f"剩余任务: {len(remaining_docs)} 个片段")
     
-    if progress_bar:
-        progress_bar.progress(current_count / total_docs, text=f"准备继续：跳过前 {current_count} 个，剩余 {len(remaining_docs)} 个...")
+    if progress_callback:
+        progress_callback(current_count, total_docs)
 
     # 4. 分批处理循环
     # 计算需要多少个批次
@@ -268,9 +285,8 @@ def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -
         
         # UI 进度显示
         current_global_idx = current_count + start
-        if progress_bar:
-            pct = min(current_global_idx / total_docs, 1.0)
-            progress_bar.progress(pct, text=f"正在处理: {current_global_idx}/{total_docs} (Batch {i+1}/{total_batches})")
+        if progress_callback:
+            progress_callback(current_global_idx, total_docs)
 
         # 调用 Embedding (这里利用了之前增加的重试机制)
         try:
@@ -309,6 +325,44 @@ def resume_kb_embedding(kb_name: str, batch_size: int = 20, progress_bar=None) -
 
     final_count = vectorstore.index.ntotal if vectorstore else current_count
     return final_count, total_docs
+
+
+# [新增] 以“文档”为粒度的视图，便于前端展示
+def get_kb_documents(kb_name: str) -> List[Dict]:
+    """
+    将知识库 JSON 中的片段按 source 聚合成“文档”列表。
+
+    返回示例:
+    [
+        {
+            "name": "xxx.pdf",
+            "chunk_count": 42,
+            "total_chars": 12345,
+        },
+        ...
+    ]
+    """
+    data = _read_kb_json(kb_name)
+    docs: Dict[str, Dict[str, Any]] = {}
+
+    for item in data:
+        meta = item.get("metadata", {})
+        source = meta.get("source", "unknown")
+        content = item.get("page_content", "") or ""
+
+        if source not in docs:
+            docs[source] = {
+                "name": source,
+                "chunk_count": 0,
+                "total_chars": 0,
+            }
+
+        docs[source]["chunk_count"] += 1
+        docs[source]["total_chars"] += len(content)
+
+    # 转为列表形式，前端更易消费
+    return list(docs.values())
+
 
 # [新增] 搜索功能
 def search_kb_chunks(kb_name: str, keyword: str, limit: int = 20) -> List[Dict]:

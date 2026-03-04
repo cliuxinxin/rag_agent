@@ -81,7 +81,11 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 发送消息 (流式)
    */
-  async function sendMessage(query: string, onProgress?: (event: SSEEvent) => void) {
+  async function sendMessage(
+    query: string,
+    onProgress?: (event: SSEEvent) => void,
+    kbNames?: string[]
+  ) {
     if (!query.trim()) return
     
     isLoading.value = true
@@ -105,6 +109,7 @@ export const useChatStore = defineStore('chat', () => {
         {
           query,
           session_id: currentSessionId.value || undefined,
+          kb_ids: kbNames && kbNames.length > 0 ? kbNames : undefined,
           mode: 'chat',
         },
         (event: SSEEvent) => {
@@ -117,7 +122,16 @@ export const useChatStore = defineStore('chat', () => {
             // 完成后重新加载消息历史
             if (currentSessionId.value) {
               loadSessionMessages(currentSessionId.value)
+              
+              // 如果是第一轮对话（1 问 1 答，共 2 条消息），触发标题生成
+              if (messages.value.length === 2) {
+                chatApi.generateSmartTitle(currentSessionId.value).then(() => {
+                  loadSessions() // 生成后刷新标题
+                })
+              }
             }
+            // 会话标题可能由后端 LLM 更新，这里顺便刷新会话列表
+            loadSessions()
             isLoading.value = false
           }
         },

@@ -1,13 +1,32 @@
 <template>
   <div class="chat-container">
-    <!-- 左侧边栏：历史记录 -->
+    <!-- 左侧边栏：历史记录 + 知识库选择 -->
     <aside class="sidebar">
       <div class="sidebar-header">
         <el-button type="primary" @click="newChat" :icon="Plus">
           新建对话
         </el-button>
       </div>
-      
+
+      <div class="kb-selector">
+        <div class="kb-selector-label">知识库过滤</div>
+        <el-select
+          v-model="selectedKbNames"
+          multiple
+          filterable
+          collapse-tags
+          placeholder="选择用于本轮对话的知识库"
+          size="small"
+        >
+          <el-option
+            v-for="kb in availableKbs"
+            :key="kb"
+            :label="kb"
+            :value="kb"
+          />
+        </el-select>
+      </div>
+
       <div class="sessions-list">
         <el-menu
           :default-active="currentSessionId"
@@ -42,14 +61,30 @@
             <el-icon v-else><Service /></el-icon>
           </div>
           <div class="message-content">
-            <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
+            <div
+              class="message-text markdown-body"
+              v-html="renderMarkdown(splitContent(msg).body)"
+            ></div>
+
+            <!-- 引用与调研过程折叠展示，仅对助手消息开启 -->
+            <el-collapse
+              v-if="msg.role === 'assistant' && splitContent(msg).appendix"
+              class="refs-collapse"
+            >
+              <el-collapse-item title="引用与调研过程" name="refs">
+                <div
+                  class="refs-content markdown-body"
+                  v-html="renderMarkdown(splitContent(msg).appendix || '')"
+                ></div>
+              </el-collapse-item>
+            </el-collapse>
           </div>
         </div>
 
         <!-- 加载中提示 -->
         <div v-if="chatStore.isLoading" class="loading-message">
           <el-progress :indeterminate="true" :stroke-width="2" />
-          
+
           <!-- 思考过程展示 -->
           <el-collapse v-if="chatStore.progressNodes.length > 0" class="progress-collapse">
             <el-collapse-item title="思考过程" name="1">
@@ -91,23 +126,55 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chatStore'
 import type { SSEEvent } from '@/api/chat'
 import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
+import 'github-markdown-css/github-markdown.css'
 import { Plus, Delete, User, Service, Loading, ChatDotRound } from '@element-plus/icons-vue'
+import apiClient from '@/api'
 
 const chatStore = useChatStore()
 const inputMessage = ref('')
+const availableKbs = ref<string[]>([])
+const selectedKbNames = ref<string[]>([])
 
 // Markdown 渲染配置
 marked.setOptions({
   breaks: true,
   gfm: true,
+  highlight: function (code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+    return hljs.highlight(code, { language }).value
+  },
 })
 
 const renderMarkdown = (text: string) => {
   return marked(text)
+}
+
+// 将 Answerer 追加的“调查笔记 / 原始片段”从正文中分离出来，方便折叠展示
+const splitContent = (msg: { content: string }) => {
+  const text = msg.content || ''
+  // 以第一个“调查笔记”或“原始片段”分隔，保持与后端约定的格式兼容
+  const markers = ['【🕵️‍♂️ 调查笔记】', '【📚 原始片段】']
+  let idx = -1
+  for (const m of markers) {
+    const pos = text.indexOf(m)
+    if (pos !== -1) {
+      idx = idx === -1 ? pos : Math.min(idx, pos)
+    }
+  }
+
+  if (idx === -1) {
+    return { body: text, appendix: '' }
+  }
+  return {
+    body: text.slice(0, idx).trim(),
+    appendix: text.slice(idx).trim(),
+  }
 }
 
 const newChat = async () => {
@@ -137,11 +204,18 @@ const sendMessage = async () => {
     console.log('进度更新:', event)
   }
   
-  await chatStore.sendMessage(query, onProgress)
+  await chatStore.sendMessage(query, onProgress, selectedKbNames.value)
 }
 
 onMounted(async () => {
   await chatStore.loadSessions()
+  // 加载可用知识库列表，用于多选过滤
+  try {
+    const resp = await apiClient.get('/api/kb/list')
+    availableKbs.value = resp.kbs || []
+  } catch (e) {
+    console.error('加载知识库列表失败:', e)
+  }
 })
 </script>
 
@@ -163,6 +237,17 @@ onMounted(async () => {
 .sidebar-header {
   padding: 20px;
   border-bottom: 1px solid #e4e7ed;
+}
+
+.kb-selector {
+  padding: 12px 20px;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.kb-selector-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
 }
 
 .sessions-list {
@@ -214,11 +299,30 @@ onMounted(async () => {
   line-height: 1.6;
 }
 
+/* 覆盖 github-markdown-css 的背景色，使其与消息框背景一致 */
+.markdown-body {
+  background-color: transparent !important;
+  font-size: 14px;
+}
+
+.markdown-body :deep(pre) {
+  background-color: #f6f8fa;
+}
+
 .loading-message {
   padding: 20px;
   background: #f5f7fa;
   border-radius: 8px;
   margin-top: 10px;
+}
+
+.refs-collapse {
+  margin-top: 10px;
+}
+
+.refs-content {
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .progress-collapse {

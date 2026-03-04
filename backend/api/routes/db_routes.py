@@ -97,6 +97,41 @@ async def remove_session(session_id: str):
         raise HTTPException(status_code=500, detail=f"删除会话失败：{str(e)}")
 
 
+@router.post("/sessions/{session_id}/generate_title", summary="智能生成并更新会话标题")
+async def generate_session_title(session_id: str):
+    """
+    根据会话的第一轮对话，自动生成简短标题并更新数据库。
+    """
+    try:
+        from src.db import get_messages, update_session_title
+        from src.nodes.common import get_llm
+        from langchain_core.messages import HumanMessage
+        
+        messages = get_messages(session_id)
+        if not messages or len(messages) < 2:
+            return {"status": "skipped", "reason": "Not enough messages"}
+            
+        user_query = messages[0]['content']
+        ai_response = messages[1]['content']
+        
+        llm = get_llm()
+        prompt = f"""
+        请根据以下对话内容，为一个聊天会话起一个极其简短的标题（不超过 10 个字）。
+        只需输出标题文字，不要有任何标点符号或前缀。
+        
+        用户：{user_query}
+        助手：{ai_response[:200]}...
+        """
+        
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        smart_title = response.content.strip().replace('"', '').replace("'", "")
+        
+        update_session_title(session_id, smart_title)
+        return {"status": "updated", "title": smart_title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成标题失败：{str(e)}")
+
+
 @router.post("/messages", summary="保存消息")
 async def save_new_message(message: MessageModel):
     """
