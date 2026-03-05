@@ -29,7 +29,7 @@
 
       <div class="sessions-list">
         <el-menu
-          :default-active="currentSessionId"
+          :default-active="chatStore.currentSessionId"
           @select="loadSession"
         >
           <el-menu-item

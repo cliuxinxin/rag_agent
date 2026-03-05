@@ -90,7 +90,7 @@
                 <el-checkbox v-model="writeForm.auto_mode" label="⚡ 一键成文 (自动选角度 + 写作)" border />
               </div>
           
-              <el-button type="primary" class="action-btn" :loading="isGenerating" @click="handlePlan">
+              <el-button type="primary" class="action-btn" :loading="isGenerating" @click="runPlanning">
                 🚀 启动策划会
               </el-button>
             </el-form>
@@ -191,36 +191,6 @@
                 source-tag="DeepSeek Newsroom" 
               />
             </el-tab-pane>
-
-            <!-- 3. X (Twitter) -->
-            <el-tab-pane label="🐦 X (Twitter)" name="twitter">
-              <div class="twitter-tool">
-                <div class="tool-desc">
-                  <p>拒绝手动粘贴！选择模式生成推特文案。</p>
-                </div>
-                <el-radio-group v-model="twitterMode" class="mb-4">
-                  <el-radio label="thread">🧵 Thread 模式 (配合 Typefully)</el-radio>
-                  <el-radio label="long">💎 蓝 V 长推模式</el-radio>
-                </el-radio-group>
-                
-                <el-button type="primary" :loading="isGeneratingTwitter" @click="handleGenTwitter">
-                  🚀 生成推特专属文案
-                </el-button>
-
-                <div v-if="twitterContent" class="twitter-output">
-                  <el-alert title="✅ 推特文案生成完毕！" type="success" :closable="false" show-icon style="margin-bottom: 15px;" />
-                  <div class="code-block">
-                    <pre>{{ twitterContent }}</pre>
-                    <el-button size="small" class="copy-btn" @click="copyTwitter">Copy</el-button>
-                  </div>
-                  
-                  <div class="publish-btns">
-                    <el-button v-if="twitterMode === 'thread'" type="primary" @click="openTypefully">🚀 前往 Typefully 极速发推</el-button>
-                    <el-button v-else type="primary" @click="openTwitter">↗️ 唤起推特网页版直接发布</el-button>
-                  </div>
-                </div>
-              </div>
-            </el-tab-pane>
           </el-tabs>
         </div>
       </el-main>
@@ -233,7 +203,6 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, RefreshRight, Back, Plus, Delete, UploadFilled } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import apiClient from '@/api'
 import dayjs from 'dayjs'
 import KnowledgeCard from './KnowledgeCard.vue'
 import {
@@ -245,7 +214,6 @@ import {
   generateOutline,
   refineOutline,
   DRAFT_API_URL,
-  generateTwitter,
   type PlanParams,
   type Angle
 } from '@/api/write'
@@ -291,11 +259,6 @@ const critiqueNotes = ref('')
 
 // 预览相关
 const activePreviewTab = ref('text')
-
-// Twitter 相关
-const twitterMode = ref<'thread' | 'long'>('thread')
-const isGeneratingTwitter = ref(false)
-const twitterContent = ref('')
 
 // ==================== 计算属性 ====================
 const stepLabels = ['素材与配置', '选题定调', '大纲确认', '流式写作']
@@ -449,10 +412,7 @@ const handleRefineOutline = async () => {
   if (!outlineFeedback.value) return
   isGenerating.value = true
   try {
-    const res: any = await refineOutline({
-      project_id: projectId.value!,
-      feedback: outlineFeedback.value
-    })
+    const res: any = await refineOutline(projectId.value!, outlineFeedback.value)
     outline.value = res.outline
     outlineFeedback.value = ''
     loopCount.value++
@@ -536,37 +496,6 @@ const handleSSEResponse = (data: any) => {
   }
 }
 
-// ==================== Twitter ====================
-const handleGenTwitter = async () => {
-  isGeneratingTwitter.value = true
-  try {
-    const res: any = await generateTwitter({
-      article_content: finalArticle.value || draftingContent.value,
-      mode: twitterMode.value
-    })
-    twitterContent.value = res.content
-    ElMessage.success('推特文案已生成')
-  } catch (error) {
-    ElMessage.error('生成失败')
-  } finally {
-    isGeneratingTwitter.value = false
-  }
-}
-
-const copyTwitter = () => {
-  navigator.clipboard.writeText(twitterContent.value)
-  ElMessage.success('已复制到剪贴板')
-}
-
-const openTypefully = () => {
-  window.open('https://typefully.com/new', '_blank')
-}
-
-const openTwitter = () => {
-  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(twitterContent.value)}`
-  window.open(url, '_blank')
-}
-
 // ==================== 辅助工具 ====================
 const renderMarkdown = (text: string) => marked(text, { breaks: true, gfm: true })
 
@@ -596,104 +525,144 @@ const rePolish = () => {
 </script>
 
 <style scoped>
+/* 核心变量定义 - Apple Design */
 .deep-write-container {
+  --app-bg: #F5F5F7;
+  --sidebar-bg: rgba(245, 245, 247, 0.8);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: 1px solid rgba(0, 0, 0, 0.05);
+  --primary: #007AFF;
+  --text-main: #1D1D1F;
+  --text-sec: #86868B;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  
   height: 100vh;
-  background: #f0f2f5;
+  background-color: var(--app-bg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  color: var(--text-main);
 }
 
+/* 侧边栏：磨砂质感 */
 .history-aside {
-  background: #fff;
-  border-right: 1px solid #dcdfe6;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(0,0,0,0.08);
+  display: flex;
+  flex-direction: column;
 }
 
 .history-section {
-  padding: 15px;
+  padding: 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .history-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
+  margin-bottom: 20px;
 }
 
 .history-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .history-item {
-  padding: 12px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
   cursor: pointer;
-  margin-bottom: 8px;
-  transition: all 0.3s;
+  margin-bottom: 2px;
+  transition: background 0.2s;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   position: relative;
-  border: 1px solid transparent;
 }
 
 .history-item:hover {
-  background: #f5f7fa;
+  background: rgba(0,0,0,0.05);
 }
 
 .history-item.active {
-  background: #ecf5ff;
-  border-color: #409eff;
+  background: #E5E5EA;
+  color: black;
+  font-weight: 500;
 }
 
 .item-title {
   font-size: 14px;
-  font-weight: 500;
+  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 25px;
+  max-width: 180px;
 }
 
 .item-meta {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-sec);
 }
 
 .del-btn {
+  opacity: 0;
+  padding: 4px;
+  border-radius: 4px;
+  color: #FF3B30;
   position: absolute;
   right: 8px;
-  top: 12px;
-  opacity: 0;
-  transition: opacity 0.3s;
+  top: 10px;
 }
 
 .history-item:hover .del-btn {
   opacity: 1;
 }
 
+.del-btn:hover {
+  background: rgba(255, 59, 48, 0.1);
+}
+
 /* ==================== Wizard ==================== */
 .wizard-aside {
-  background: #fff;
-  border-right: 1px solid #dcdfe6;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
 }
 
 .wizard-content {
-  padding: 20px;
+  flex: 1;
+  padding: 20px 40px;
+  max-width: 1000px;
+  width: 100%;
+  margin: 0 auto;
+  overflow-y: auto;
+  position: relative;
   display: flex;
   flex-direction: column;
-  height: 100%;
 }
 
 .wizard-header {
-  margin-bottom: 20px;
+  margin-bottom: 30px;
+  text-align: center;
 }
 
 .wizard-header h2 {
-  margin: 0 0 15px 0;
-  font-size: 20px;
+  font-size: 28px;
+  margin-bottom: 8px;
+  font-weight: 700;
 }
 
 .step-label {
   margin-top: 10px;
   font-size: 14px;
-  color: #606266;
+  color: var(--text-sec);
 }
 
 .step-panel {
@@ -703,13 +672,18 @@ const rePolish = () => {
 
 .panel-desc {
   margin-bottom: 15px;
-  color: #606266;
+  color: var(--text-sec);
   font-size: 14px;
+  text-align: center;
 }
 
 .action-btn {
   width: 100%;
   margin-top: 15px;
+  height: 44px;
+  font-weight: 600;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0, 122, 255, 0.3);
 }
 
 .switches {
@@ -722,35 +696,48 @@ const rePolish = () => {
 .angle-list {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 24px;
 }
 
 .angle-card {
+  background: white;
+  border-radius: 20px;
+  padding: 30px 24px;
+  position: relative;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  border: 1px solid rgba(0,0,0,0.02);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
 }
 
 .angle-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-10px);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.1);
 }
 
 .angle-card h4 {
-  margin: 0 0 10px 0;
-  font-size: 15px;
-  color: #303133;
+  font-size: 18px;
+  margin-bottom: 12px;
+  margin-top: 10px;
+  color: var(--text-main);
 }
 
 .angle-card .desc {
-  font-size: 13px;
-  color: #606266;
+  font-size: 14px;
+  color: #666;
   line-height: 1.5;
+  min-height: 42px;
   margin-bottom: 8px;
 }
 
 .angle-card .reason {
+  margin-top: 20px;
+  background: #F2F2F7;
+  padding: 12px;
+  border-radius: 10px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-sec);
+  line-height: 1.4;
   margin-bottom: 10px;
 }
 
@@ -761,30 +748,34 @@ const rePolish = () => {
 
 /* ==================== Outline ==================== */
 .outline-box {
-  background: #f8f9fa;
-  padding: 15px;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  background: white;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  position: relative;
+  min-height: 400px;
 }
 
 .outline-item {
   display: flex;
   gap: 12px;
-  margin-bottom: 15px;
+  margin-bottom: 30px;
+  position: relative;
 }
 
 .outline-item .idx {
-  width: 24px;
-  height: 24px;
-  background: #409eff;
-  color: #fff;
+  width: 30px;
+  height: 30px;
+  background: white;
+  border: 2px solid var(--text-main);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-weight: 700;
   flex-shrink: 0;
-  font-weight: bold;
 }
 
 .outline-item .content {
@@ -792,13 +783,13 @@ const rePolish = () => {
 }
 
 .outline-item .title {
-  font-weight: bold;
-  font-size: 14px;
-  color: #303133;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text-main);
 }
 
 .outline-item .gist {
-  font-size: 12px;
+  font-size: 14px;
   color: #666;
   margin-top: 4px;
 }
@@ -826,12 +817,13 @@ const rePolish = () => {
   background: #1e1e1e;
   color: #d4d4d4;
   padding: 15px;
-  border-radius: 8px;
-  font-family: 'Courier New', Courier, monospace;
+  border-radius: 12px;
+  font-family: "SF Mono", "Fira Code", monospace;
   height: 200px;
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
 .log-line {
@@ -840,7 +832,7 @@ const rePolish = () => {
 
 /* ==================== Preview Area ==================== */
 .preview-main {
-  background: #fff;
+  background: transparent;
   padding: 0;
 }
 
@@ -861,7 +853,7 @@ const rePolish = () => {
   flex: 1;
   overflow-y: auto;
   padding: 40px;
-  background: #fafafa;
+  background: transparent;
 }
 
 .markdown-body {
@@ -870,7 +862,7 @@ const rePolish = () => {
   padding: 40px;
   background: #fff;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
+  border-radius: 8px;
   min-height: 100%;
 }
 
@@ -894,54 +886,9 @@ const rePolish = () => {
   gap: 15px;
   justify-content: center;
   border-top: 1px solid #e4e7ed;
-  background: #fff;
-}
-
-/* ==================== Twitter Tool ==================== */
-.twitter-tool {
-  padding: 30px;
-  max-width: 800px;
-  margin: 0 auto;
-}
-
-.tool-desc {
-  margin-bottom: 20px;
-  color: #606266;
-}
-
-.mb-4 {
-  margin-bottom: 15px;
-}
-
-.twitter-output {
-  margin-top: 20px;
-}
-
-.code-block {
-  position: relative;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 20px;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  max-height: 500px;
-  overflow-y: auto;
-}
-
-.code-block .copy-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-}
-
-.publish-btns {
-  display: flex;
-  gap: 15px;
-  margin-top: 15px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 /* ==================== Tabs ==================== */

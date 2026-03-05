@@ -66,18 +66,24 @@ def angle_generator_node(state: NewsroomState) -> dict:
     
     # 传入 prompt
     user_msg = HumanMessage(content=get_angle_generator_prompt(search_context))
-    response = llm.invoke([base_sys, user_msg]).content
-
-    # ... (JSON 解析代码不变) ...
+    
+    # ================= [修改] 增加容错保护 =================
+    # 将 LLM 调用和 JSON 解析全部放入 try 块，防止 API 报错导致崩溃
     try:
+        response = llm.invoke([base_sys, user_msg]).content
         clean_json = response.replace("```json", "").replace("```", "").strip()
         angles = json.loads(clean_json)
-    except Exception:
+        logger.info("[AngleGen] 角度生成成功")
+        
+    except Exception as e:
+        logger.error(f"[AngleGen] 角度生成失败 (API 或解析错误): {e}", exc_info=True)
+        # 降级方案：生成保底数据，保证流程不中断
         angles = [
-            {"title": "深度分析", "desc": "基于文档内容的标准分析", "reasoning": "Fallback"},
-            {"title": "要点提炼", "desc": "快速提取核心信息", "reasoning": "Fallback"},
-            {"title": "批判性视角", "desc": "寻找文档中的逻辑漏洞", "reasoning": "Fallback"}
+            {"title": "深度解析视角", "desc": f"基于关于 {req[:10]}... 的深度分析", "reasoning": "系统自动降级：LLM 生成超时或格式错误"},
+            {"title": "核心事实梳理", "desc": "快速梳理事件的时间线与关键要素", "reasoning": "系统自动降级：LLM 生成超时或格式错误"},
+            {"title": "行业影响分析", "desc": "探讨该事件对相关领域的潜在影响", "reasoning": "系统自动降级：LLM 生成超时或格式错误"}
         ]
+    # =======================================================
 
     return {"generated_angles": angles}
 

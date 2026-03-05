@@ -103,8 +103,11 @@ export function generateOutline(projectId: string, selectedAngle: Angle) {
 /**
  * [Step 2.5] 修订大纲 - 根据用户反馈修改大纲
  */
-export function refineOutline(data: RefineOutlineParams) {
-  return apiClient.post('/api/write/refine_outline', data)
+export function refineOutline(projectId: string, feedback: string) {
+  return apiClient.post('/api/write/refine_outline', {
+    project_id: projectId,
+    feedback: feedback
+  })
 }
 
 /**
@@ -112,10 +115,3 @@ export function refineOutline(data: RefineOutlineParams) {
  * 注意：此接口直接使用 fetch 调用，不走 axios 拦截器
  */
 export const DRAFT_API_URL = `${apiClient.defaults.baseURL}/api/write/draft`
-
-/**
- * [Step 4] 生成推特文案
- */
-export function generateTwitter(data: TwitterParams) {
-  return apiClient.post('/api/write/generate_twitter', data)
-}
