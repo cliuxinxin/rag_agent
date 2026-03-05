@@ -1,24 +1,56 @@
 import tempfile
 import os
 from typing import List
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from pypdf import PdfReader
+
+
+def _load_from_path(path: str, filename: str) -> List[Document]:
+    """
+    从本地文件路径加载为 Document 列表。
+    仅依赖 pypdf 与标准文本读取，避免 langchain_community 的兼容性问题。
+    """
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext == ".pdf":
+        reader = PdfReader(path)
+        docs: List[Document] = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            if not text.strip():
+                continue
+            docs.append(
+                Document(
+                    page_content=text,
+                    metadata={"source": filename, "page": i},
+                )
+            )
+        return docs
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        if not text.strip():
+            return []
+        return [
+            Document(
+                page_content=text,
+                metadata={"source": filename},
+            )
+        ]
+
 
 def load_file(uploaded_file) -> List[Document]:
     """将 Streamlit 上传的文件转换为 Document 对象列表。"""
     file_ext = uploaded_file.name.split(".")[-1].lower()
-    
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
         tmp.write(uploaded_file.getvalue())
         tmp_path = tmp.name
 
     try:
-        if file_ext == "pdf":
-            loader = PyPDFLoader(tmp_path)
-        else:
-            loader = TextLoader(tmp_path, encoding="utf-8")
-        return loader.load()
+        return _load_from_path(tmp_path, uploaded_file.name)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

@@ -1,4 +1,4 @@
-# src/db.py
+import os
 import sqlite3
 import uuid
 import json
@@ -11,7 +11,10 @@ from src.logger import get_logger
 logger = get_logger("Database")
 
 # === 路径配置 ===
-STORAGE_DIR = Path("storage")
+# 将数据库固定在项目根目录下的 storage 目录，避免 backend/ 与根目录运行时产生多个不同路径
+SRC_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = SRC_DIR.parent
+STORAGE_DIR = PROJECT_ROOT / "storage"
 STORAGE_DIR.mkdir(exist_ok=True)
 DB_PATH = STORAGE_DIR / "chat_history.db"
 

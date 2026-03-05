@@ -1,0 +1,30 @@
+# Dockerfile.backend
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装基础依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖配置
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制源代码
+# 注意：我们需要 src (核心逻辑) 和 backend (API 接口)
+COPY src /app/src
+COPY backend /app/backend
+COPY config.yaml . 
+# 创建必要的目录
+RUN mkdir -p /app/storage /app/logs /app/skills
+
+# 暴露端口
+EXPOSE 8000
+
+# 启动命令
+# 确保 PYTHONPATH 包含当前目录
+ENV PYTHONPATH=/app
+CMD ["python", "backend/api/main.py"]

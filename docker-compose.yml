@@ -1,14 +1,38 @@
 version: '3.8'
 
 services:
-  deepseek-rag:
-    build: .
-    container_name: deepseek_rag_pro
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: rag_backend
+    restart: always
     ports:
-      - "8000:8501"
+      - "8000:8000"  # 暴露 API 端口供外部访问（可选，Nginx 内部已反代）
     volumes:
-      # 持久化知识库数据
-      - ./storage:/app/storage
+      - ./storage:/app/storage   # 持久化数据库和向量库
+      - ./logs:/app/logs         # 持久化日志
+      - ./backend/skills:/app/backend/skills # 技能脚本持久化
     env_file:
       - .env
-    restart: unless-stopped
+    networks:
+      - rag_net
+
+  # 前端服务 (Nginx + Vue Dist)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rag_frontend
+    restart: always
+    ports:
+      - "80:80"      # 对外暴露 80 端口
+    depends_on:
+      - backend      # 等后端启动后再启动
+    networks:
+      - rag_net
+
+networks:
+  rag_net:
+    driver: bridge
