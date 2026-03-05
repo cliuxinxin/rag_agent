@@ -28,3 +28,5 @@ EXPOSE 8000
 # 确保 PYTHONPATH 包含当前目录
 ENV PYTHONPATH=/app
 CMD ["python", "backend/api/main.py"]
+
+
