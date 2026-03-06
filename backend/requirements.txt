@@ -40,6 +40,12 @@ python-pptx>=0.6.23
 python-dotenv>=1.0.0
 PyYAML>=6.0.1
 tiktoken>=0.5.2
+python-frontmatter>=1.0.0
+jieba>=0.42.0
+rank_bm25>=0.2.0
+streamlit-authenticator>=0.3.0
+markdown>=3.0.0
+langgraph-checkpoint-sqlite>=0.0.10
 
 # 日志
 loguru>=0.7.2
