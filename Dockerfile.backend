@@ -9,15 +9,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖配置
-COPY requirements.txt .
+# 复制依赖配置 - 使用 backend/requirements.txt
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制源代码
 # 注意：我们需要 src (核心逻辑) 和 backend (API 接口)
 COPY src /app/src
 COPY backend /app/backend
-COPY config.yaml . 
+COPY config.yaml .
 # 创建必要的目录
 RUN mkdir -p /app/storage /app/logs /app/skills
 
