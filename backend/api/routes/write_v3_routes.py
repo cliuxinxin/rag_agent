@@ -36,7 +36,9 @@ async def run_write_v3(req: WriteRequest):
             # 维护一个累积的草稿，用于前端实时展示
             accumulated_drafts = [] 
             
-            async for event in write_graph_v3.astream(initial_state):
+            # === [关键修复] 增加 recursion_limit ===
+            # 将限制设为 100，防止章节过多导致 Graph 强制停止
+            async for event in write_graph_v3.astream(initial_state, config={"recursion_limit": 100}):
                 for node_name, update in event.items():
                     # 1. 提取日志
                     logs = update.get("run_logs", [])

@@ -18,9 +18,9 @@ def get_llm():
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.3,
-            max_retries=2,
-            # 显式增加超时时间到 120 秒 (默认可能是 60s)
-            request_timeout=120,
+            max_retries=3, # 增加重试次数
+            # === [关键修复] 增加超时时间到 300 秒 ===
+            request_timeout=300,
             # 显式拉大输出上限以防止截断
             # DeepSeek V3 最大支持 8192 output tokens
             max_tokens=8000

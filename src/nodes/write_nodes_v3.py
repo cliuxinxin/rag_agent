@@ -1,4 +1,5 @@
 import json
+import time # 引入 time
 from langchain_core.messages import HumanMessage
 from src.nodes.common import get_llm
 from src.state import DeepWriteState
@@ -10,6 +11,9 @@ from src.prompts_v3 import (
     get_reviewer_prompt,
     get_polisher_prompt
 )
+from src.logger import get_logger # 引入日志
+
+logger = get_logger("WriteNodeV3")
 
 # [新增] 0. 主题生成节点
 def topic_generator_node(state: DeepWriteState) -> dict:
@@ -59,7 +63,7 @@ def architect_node(state: DeepWriteState) -> dict:
         "run_logs": [f"✅ [架构师] 已设计 {len(outline)} 个章节的大纲"]
     }
 
-# 3. 接力撰稿人 (核心)
+# 3. 接力撰稿人 (核心修复)
 def writer_node(state: DeepWriteState) -> dict:
     idx = state["current_section_index"]
     outline = state["outline"]
@@ -71,24 +75,43 @@ def writer_node(state: DeepWriteState) -> dict:
 
     current_sec = outline[idx]
     
-    # 构造前文上下文 (把之前的草稿拼起来)
+    # 构造前文上下文
     prev_context = "\n\n".join(drafts) if drafts else "(这是文章的开头)"
     outline_str = json.dumps(outline, ensure_ascii=False, indent=1)
     
     llm = get_llm()
     prompt = get_writer_prompt(current_sec["title"], current_sec["gist"], prev_context, outline_str)
     
-    # 生成本章内容
-    content = llm.invoke([HumanMessage(content=prompt)]).content
+    # === [修复 1] 记录开始日志 ===
+    start_log = f"⏳ [撰稿人] 正在撰写第 {idx+1}/{len(outline)} 章：{current_sec['title']}..."
+    logger.info(start_log)
     
-    # 加上 Markdown 标题，方便阅读
-    formatted_section = f"## {current_sec['title']}\n\n{content}"
-    
-    return {
-        "section_drafts": [formatted_section], # 通过 add_list 机制追加
-        "current_section_index": idx + 1,
-        "run_logs": [f"✍️ [撰稿人] 完成第 {idx+1} 章：{current_sec['title']}"]
-    }
+    # === [修复 2] 增加异常捕获，防止卡死 ===
+    try:
+        # 调用 LLM
+        content = llm.invoke([HumanMessage(content=prompt)]).content
+        
+        # 加上 Markdown 标题
+        formatted_section = f"## {current_sec['title']}\n\n{content}"
+        
+        success_log = f"✅ [撰稿人] 完成第 {idx+1} 章"
+        
+        return {
+            "section_drafts": [formatted_section],
+            "current_section_index": idx + 1,
+            "run_logs": [start_log, success_log] # 把开始和结束都发给前端
+        }
+        
+    except Exception as e:
+        logger.error(f"章节 {idx+1} 生成失败: {e}", exc_info=True)
+        # 生成失败时的降级处理：生成一个错误提示，保证流程不中断
+        error_content = f"## {current_sec['title']}\n\n*(本章生成时发生网络错误，请稍后手动润色)*\n\n> Error: {str(e)}"
+        
+        return {
+            "section_drafts": [error_content],
+            "current_section_index": idx + 1,
+            "run_logs": [start_log, f"❌ [撰稿人] 第 {idx+1} 章生成出错，已跳过"]
+        }
 
 # 4. 主编
 def reviewer_node(state: DeepWriteState) -> dict:
