@@ -1,14 +1,29 @@
 import json
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from src.nodes.common import get_llm
 from src.state import DeepWriteState
 from src.prompts_v3 import (
+    get_topic_gen_prompt, # 新增引用
     get_analyst_prompt,
     get_architect_prompt,
     get_writer_prompt,
     get_reviewer_prompt,
     get_polisher_prompt
 )
+
+# [新增] 0. 主题生成节点
+def topic_generator_node(state: DeepWriteState) -> dict:
+    llm = get_llm()
+    # 如果用户没填内容，给个默认值防止报错
+    content = state.get("raw_content") or "无内容"
+    
+    prompt = get_topic_gen_prompt(content)
+    topic = llm.invoke([HumanMessage(content=prompt)]).content.strip().replace('"', '')
+    
+    return {
+        "topic": topic,
+        "run_logs": [f"💡 已自动生成主题：{topic}"]
+    }
 
 # 1. 分析师
 def analyst_node(state: DeepWriteState) -> dict:

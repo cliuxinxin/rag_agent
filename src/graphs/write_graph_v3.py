@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from src.state import DeepWriteState
 from src.nodes.write_nodes_v3 import (
+    topic_generator_node, # 新增
     analyst_node,
     architect_node,
     writer_node,
@@ -22,16 +23,18 @@ def build_graph():
     wf = StateGraph(DeepWriteState)
     
     # 注册节点
+    wf.add_node("TopicGen", topic_generator_node) # 新增
     wf.add_node("Analyst", analyst_node)
     wf.add_node("Architect", architect_node)
     wf.add_node("Writer", writer_node)
     wf.add_node("Reviewer", reviewer_node)
     wf.add_node("Polisher", polisher_node)
     
-    # 设置入口
-    wf.set_entry_point("Analyst")
+    # 设置入口：从生成主题开始
+    wf.set_entry_point("TopicGen")
     
     # 连线
+    wf.add_edge("TopicGen", "Analyst") # TopicGen -> Analyst
     wf.add_edge("Analyst", "Architect")
     wf.add_edge("Architect", "Writer")
     

@@ -91,3 +91,17 @@ def get_polisher_prompt(full_draft: str, critique: str) -> str:
     
     请直接输出【最终成稿】（Markdown格式）。
     """
+
+# [新增] 主题生成
+def get_topic_gen_prompt(raw_content: str) -> str:
+    return f"""
+    【任务】基于以下素材，拟定一个吸引人的文章标题（Topic）。
+    
+    【素材片段】
+    {raw_content[:5000]}
+    
+    【要求】
+    1. 标题要简练、有力，不超过 20 个字。
+    2. 不要使用"关于...的分析"这种无聊的格式。
+    3. 只输出标题文本，不要包含任何标点或解释。
+    """
