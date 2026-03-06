@@ -7,8 +7,6 @@ from passlib.context import CryptContext
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # 配置项
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-666-888")
 ALGORITHM = "HS256"
@@ -18,11 +16,24 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 天
 # 这里预置一个默认管理员用户: admin / admin123
 # 注意：在 Python 3.13 中 bcrypt 可能存在兼容性问题，这里改用 pbkdf2_sha256
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD_HASH = pwd_context.hash(os.getenv("ADMIN_PASSWORD", "admin123"))
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def get_admin_username():
+    """获取管理员用户名（从环境变量读取）"""
+    return os.getenv("ADMIN_USERNAME", "admin")
+
+def get_admin_password():
+    """获取管理员密码（从环境变量读取）"""
+    return os.getenv("ADMIN_PASSWORD", "admin123")
+
+def verify_password(plain_password: str) -> bool:
+    """验证密码"""
+    admin_password = get_admin_password()
+    # 每次验证时重新hash环境变量中的密码进行比较
+    # 这样可以确保每次都使用最新的环境变量值
+    return pwd_context.verify(plain_password, pwd_context.hash(admin_password))
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -48,13 +59,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise credentials_exception
     
-    if username != ADMIN_USERNAME:
+    if username != get_admin_username():
         raise credentials_exception
     return username
 
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.username != ADMIN_USERNAME or not pwd_context.verify(form_data.password, ADMIN_PASSWORD_HASH):
+    admin_username = get_admin_username()
+    admin_password = get_admin_password()
+    
+    if form_data.username != admin_username or form_data.password != admin_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

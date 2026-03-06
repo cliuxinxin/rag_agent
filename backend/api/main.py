@@ -6,6 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import time
 import sys
 import os
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 # 添加项目根目录到 Python 路径
 project_root = os.path.join(os.path.dirname(__file__), '..')
