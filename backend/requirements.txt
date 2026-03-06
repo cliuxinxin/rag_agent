@@ -1,45 +1,45 @@
 # FastAPI 基础依赖
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
 
 # 认证相关
-python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
+python-jose[cryptography]>=3.5.0
+passlib[bcrypt]>=1.7.4
 
 # 数据验证
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
 
-# 原有项目依赖 (保持不变)
-langgraph==0.0.15
-langchain-core==0.1.0
-langchain==0.1.0
-langchain-community==0.0.10
-langchain-openai==0.0.2
+# 原有项目依赖 - 调整版本以解决冲突
+langgraph>=0.0.15
+langchain-core>=0.1.8
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-openai>=0.0.2
 
 # PDF 处理
-pypdf==3.17.4
-PyPDF2==3.0.1
+pypdf>=3.17.4
+PyPDF2>=3.0.1
 
 # 向量数据库
-faiss-cpu==1.13.2
+faiss-cpu>=1.13.2
 
 # HTTP 请求
-httpx==0.26.0
-requests==2.31.0
+httpx>=0.26.0
+requests>=2.31.0
 
 # 数据处理
-pandas==2.2.3
-numpy==1.26.3
+pandas>=2.2.3
+numpy>=1.26.3,<2.0.0
 
 # PPT 生成
-python-pptx==0.6.23
+python-pptx>=0.6.23
 
 # 其他工具
-python-dotenv==1.0.0
-PyYAML==6.0.1
-tiktoken==0.5.2
+python-dotenv>=1.0.0
+PyYAML>=6.0.1
+tiktoken>=0.5.2
 
 # 日志
-loguru==0.7.2
+loguru>=0.7.2
