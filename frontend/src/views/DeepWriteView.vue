@@ -539,10 +539,18 @@ const rePolish = () => {
   --radius-lg: 16px;
   --radius-xl: 24px;
   
-  height: 100vh;
+  height: 100%;
   background-color: var(--app-bg);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+}
+
+.deep-write-container .el-container {
+  height: 100%;
+  flex: 1;
+  display: flex;
 }
 
 /* 侧边栏：磨砂质感 */
