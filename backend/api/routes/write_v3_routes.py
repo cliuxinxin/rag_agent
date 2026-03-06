@@ -5,6 +5,9 @@ from typing import Optional
 import json
 from src.graphs.write_graph_v3 import write_graph_v3
 from src.state import DeepWriteState
+from src.logger import get_logger
+
+logger = get_logger("API_WriteV3")
 
 router = APIRouter()
 
@@ -16,6 +19,8 @@ class WriteRequest(BaseModel):
 @router.post("/run")
 async def run_write_v3(req: WriteRequest):
     """流式运行 DeepWrite V3 Graph"""
+    
+    logger.info(f"收到深度写作请求 | 字数: {len(req.content)} | 要求: {req.instruction}")
     
     # 初始化状态
     initial_state: DeepWriteState = {
@@ -72,9 +77,10 @@ async def run_write_v3(req: WriteRequest):
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             
             yield "data: [DONE]\n\n"
+            logger.info("深度写作任务流正常结束")
             
         except Exception as e:
-            print(f"Error in stream: {e}") # 打印到后台日志以便调试
+            logger.error(f"深度写作任务流异常中断: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
