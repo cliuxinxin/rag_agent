@@ -60,6 +60,12 @@ const routes = [
     name: 'DeepQA',
     component: () => import('@/views/DeepQAView.vue'),
     meta: { title: '深度追问' }
+  },
+  {
+    path: '/deep-write-v3',
+    name: 'DeepWriteV3',
+    component: () => import('@/views/DeepWriteV3View.vue'),
+    meta: { title: '新闻工作室 V3' }
   }
 ]
 

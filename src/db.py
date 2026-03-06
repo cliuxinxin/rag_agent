@@ -79,8 +79,7 @@ def init_db():
         )
         ''')
         
-        # 5. 深度写作项目表
-        # 注意：这里我们不需要 full_content 列，因为可以通过 source_data 恢复
+        # 5. 深度写作项目表 (V3 升级版)
         c.execute('''
         CREATE TABLE IF NOT EXISTS writing_projects (
             id TEXT PRIMARY KEY,
@@ -88,17 +87,25 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             
-            -- 配置信息
-            requirements TEXT,     -- 用户需求
-            source_type TEXT,      -- "kb", "file", "text"
-            source_data TEXT,      -- 核心数据：KB名称列表(json) 或 文本内容
+            requirements TEXT,     -- V2/V3 通用：用户需求配置
+            source_type TEXT,      -- "kb", "file", "text", "newsroom_v3"
             
-            -- 生成内容
-            research_report TEXT,  -- 调研报告
-            outline_data TEXT,     -- 大纲结构 (JSON)
-            full_draft TEXT        -- 最终草稿
+            -- V3 新增核心字段
+            assets_data TEXT,      -- JSON List: [{"id":.., "type": "file/text", "content":...}]
+            outline_data TEXT,     -- JSON List: [{"id":.., "title":.., "status": "empty/draft/done", "content":...}]
+            
+            -- 兼容字段 (V2用，V3主要用 outline_data 拼装)
+            full_draft TEXT,
+            source_data TEXT,
+            research_report TEXT
         )
         ''')
+        
+        # 尝试做一次列迁移 (如果 assets_data 不存在)
+        try:
+            c.execute("ALTER TABLE writing_projects ADD COLUMN assets_data TEXT")
+        except:
+            pass
         
         # 6. 深度掌握会话表
         c.execute('''
@@ -422,5 +429,27 @@ def update_mastery_session_data(session_id: str, concepts_data: List[dict]):
     json_str = json.dumps(concepts_data, ensure_ascii=False)
     c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
               (json_str, session_id))
+    conn.commit()
+    conn.close()
+
+# === V3 新增 CRUD ===
+
+def update_project_assets(project_id: str, assets: List[Dict]):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("UPDATE writing_projects SET assets_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+              (json.dumps(assets, ensure_ascii=False), project_id))
+    conn.commit()
+    conn.close()
+
+def update_project_section_content(project_id: str, outline_data: List[Dict]):
+    """更新大纲及各章节内容"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    # 顺便把 full_draft 拼出来，方便预览
+    full_text = "\n\n".join([f"## {sec['title']}\n\n{sec.get('content','')}" for sec in outline_data])
+    
+    c.execute("UPDATE writing_projects SET outline_data = ?, full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+              (json.dumps(outline_data, ensure_ascii=False), full_text, project_id))
     conn.commit()
     conn.close()

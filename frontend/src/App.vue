@@ -52,6 +52,11 @@
           <span>深度写作</span>
         </el-menu-item>
 
+        <el-menu-item index="/deep-write-v3">
+          <el-icon><Edit /></el-icon>
+          <span>新闻工作室 V3</span>
+        </el-menu-item>
+
         <el-menu-item index="/kb-management">
           <el-icon><Files /></el-icon>
           <span>知识库管理</span>
