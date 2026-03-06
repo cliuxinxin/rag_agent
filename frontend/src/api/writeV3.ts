@@ -24,3 +24,6 @@ export function polishText(content: string, instruction: string) {
 
 // 章节生成 URL，用于 fetch/EventSource
 export const SECTION_STREAM_URL = `${apiClient.defaults.baseURL}${V3_BASE}/section/stream`
+
+// 新的 DeepWrite V3 流水线接口
+export const RUN_WRITE_V3_URL = `${apiClient.defaults.baseURL}${V3_BASE}/run`

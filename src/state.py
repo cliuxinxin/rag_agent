@@ -143,6 +143,41 @@ class PPTState(TypedDict):
     run_logs: Annotated[List[str], add_strings]
 
 
+# === 辅助函数：列表追加 ===
+def add_list(left: list, right: list):
+    if not left: left = []
+    if not right: right = []
+    return left + right
+
+# === DeepWrite V3 专用状态 ===
+class DeepWriteState(TypedDict):
+    # --- 1. 输入 ---
+    topic: str                # 用户输入的主题/标题
+    raw_content: str          # 用户粘贴的原始素材/长文本
+    user_instruction: str     # 用户额外要求（如：风格、字数）
+    
+    # --- 2. 过程资产 ---
+    # [分析师] 产出：核心立意与素材摘要
+    topic_analysis: str       
+    
+    # [架构师] 产出：大纲列表 [{"title":.., "gist":..}]
+    outline: List[dict]       
+    
+    # [撰稿人] 循环控制与产出
+    current_section_index: int 
+    # 使用 add_list 确保每次循环是追加而不是覆盖
+    section_drafts: Annotated[List[str], add_list] 
+    
+    # [主编] 产出：修改意见
+    critique_notes: str       
+    
+    # --- 3. 输出 ---
+    # [润色师] 产出：最终成稿
+    final_article: str        
+    
+    # [系统] 运行日志 (用于前端展示进度)
+    run_logs: Annotated[List[str], add_list]
+
 # === Deep Mastery State ===
 class MasteryState(TypedDict):
     # 输入
