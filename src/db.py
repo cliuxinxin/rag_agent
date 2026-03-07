@@ -34,6 +34,8 @@ def init_db():
     logger.info(f"正在初始化数据库: {DB_PATH}")
     try:
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        # 开启 WAL 模式 (Write-Ahead Logging)，大幅提升并发读写能力
+        conn.execute("PRAGMA journal_mode=WAL;")
         c = conn.cursor()
         
         # 1. 会话表

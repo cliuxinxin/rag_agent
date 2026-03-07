@@ -24,7 +24,7 @@ def check_continue(state: DeepWriteState):
             return "Reviewer" # 写完了，去审阅
 
 # 极速模式下的快速收尾节点
-def fast_finish_node(state: DeepWriteState) -> dict:
+async def fast_finish_node(state: DeepWriteState) -> dict:
     full_draft = "\n\n".join(state["section_drafts"])
     # 保存到数据库
     if state.get("project_id"):

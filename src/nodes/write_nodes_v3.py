@@ -16,10 +16,10 @@ from src.prompts_v3 import (
 
 logger = get_logger("DeepWrite_V3")
 
-# === 辅助函数：带详细日志的 LLM 调用 ===
-def invoke_with_logging(llm, messages, stage_name: str) -> str:
+# === 辅助函数：带详细日志的 LLM 调用 (异步版本) ===
+async def invoke_with_logging(llm, messages, stage_name: str) -> str:
     """
-    封装 LLM 调用，记录详细的输入输出日志和耗时
+    封装 LLM 异步调用，记录详细的输入输出日志和耗时
     """
     start_time = time.time()
     
@@ -33,8 +33,8 @@ def invoke_with_logging(llm, messages, stage_name: str) -> str:
     logger.info(f"📝 [{stage_name}] Prompt 预览 (前 {preview_len} 字符):\n{prompt_preview}\n{'-'*30}")
     
     try:
-        # 2. 执行调用
-        response = llm.invoke(messages)
+        # 2. 执行异步调用
+        response = await llm.ainvoke(messages)
         content = response.content
         
         # 3. 记录耗时与输出
@@ -50,14 +50,14 @@ def invoke_with_logging(llm, messages, stage_name: str) -> str:
 # === 节点定义 ===
 
 # 0. 主题生成
-def topic_generator_node(state: DeepWriteState) -> dict:
+async def topic_generator_node(state: DeepWriteState) -> dict:
     llm = get_llm()
     content = state.get("raw_content") or "无内容"
     
     logger.info("🎬 [TopicGen] 开始工作...")
     prompt = get_topic_gen_prompt(content)
     
-    topic = invoke_with_logging(llm, [HumanMessage(content=prompt)], "TopicGen").strip().replace('"', '')
+    topic = (await invoke_with_logging(llm, [HumanMessage(content=prompt)], "TopicGen")).strip().replace('"', '')
     
     # === [关键修复] 立即更新数据库标题 ===
     if state.get("project_id"):
@@ -72,11 +72,11 @@ def topic_generator_node(state: DeepWriteState) -> dict:
     return {"topic": topic, "run_logs": [msg]}
 
 # 1. 分析师
-def analyst_node(state: DeepWriteState) -> dict:
+async def analyst_node(state: DeepWriteState) -> dict:
     llm = get_llm()
     prompt = get_analyst_prompt(state["raw_content"], state["topic"])
     
-    response = invoke_with_logging(llm, [HumanMessage(content=prompt)], "Analyst")
+    response = await invoke_with_logging(llm, [HumanMessage(content=prompt)], "Analyst")
     
     return {
         "topic_analysis": response,
@@ -84,7 +84,7 @@ def analyst_node(state: DeepWriteState) -> dict:
     }
 
 # 2. 架构师
-def architect_node(state: DeepWriteState) -> dict:
+async def architect_node(state: DeepWriteState) -> dict:
     llm = get_llm()
     # [修改] 获取字数，传入 prompt
     word_count = state.get("target_word_count", "1500字")
@@ -96,7 +96,7 @@ def architect_node(state: DeepWriteState) -> dict:
         word_count # <--- 传入
     )
     
-    response = invoke_with_logging(llm, [HumanMessage(content=prompt)], "Architect")
+    response = await invoke_with_logging(llm, [HumanMessage(content=prompt)], "Architect")
     
     try:
         clean_json = response.replace("```json", "").replace("```", "").strip()
@@ -113,7 +113,7 @@ def architect_node(state: DeepWriteState) -> dict:
     }
 
 # 3. 撰稿人
-def writer_node(state: DeepWriteState) -> dict:
+async def writer_node(state: DeepWriteState) -> dict:
     idx = state["current_section_index"]
     outline = state["outline"]
     drafts = state["section_drafts"]
@@ -132,7 +132,7 @@ def writer_node(state: DeepWriteState) -> dict:
     logger.info(start_log)
     
     try:
-        content = invoke_with_logging(llm, [HumanMessage(content=prompt)], f"Writer-Ch{idx+1}")
+        content = await invoke_with_logging(llm, [HumanMessage(content=prompt)], f"Writer-Ch{idx+1}")
         formatted_section = f"## {current_sec['title']}\n\n{content}"
         
         return {
@@ -149,12 +149,12 @@ def writer_node(state: DeepWriteState) -> dict:
         }
 
 # 4. 主编
-def reviewer_node(state: DeepWriteState) -> dict:
+async def reviewer_node(state: DeepWriteState) -> dict:
     full_draft = "\n\n".join(state["section_drafts"])
     llm = get_llm()
     prompt = get_reviewer_prompt(full_draft, state["user_instruction"])
     
-    critique = invoke_with_logging(llm, [HumanMessage(content=prompt)], "Reviewer")
+    critique = await invoke_with_logging(llm, [HumanMessage(content=prompt)], "Reviewer")
     
     return {
         "critique_notes": critique,
@@ -162,7 +162,7 @@ def reviewer_node(state: DeepWriteState) -> dict:
     }
 
 # 5. 润色师 (最容易超时的地方)
-def polisher_node(state: DeepWriteState) -> dict:
+async def polisher_node(state: DeepWriteState) -> dict:
     full_draft = "\n\n".join(state["section_drafts"])
     
     logger.info(f"✨ [润色师] 准备开始全文润色，输入长度: {len(full_draft)} 字符。这可能需要较长时间...")
@@ -172,7 +172,7 @@ def polisher_node(state: DeepWriteState) -> dict:
     
     # 润色师如果超时，我们做一个兜底：直接返回初稿，不让用户觉得失败了
     try:
-        final_article = invoke_with_logging(llm, [HumanMessage(content=prompt)], "Polisher")
+        final_article = await invoke_with_logging(llm, [HumanMessage(content=prompt)], "Polisher")
         log_msg = "✨ [润色师] 润色完成！"
     except Exception as e:
         logger.error(f"润色师超时或失败，降级为返回初稿: {e}")

@@ -236,17 +236,26 @@ const startGeneration = async () => {
     
     const reader = response.body?.getReader()
     const decoder = new TextDecoder()
+    let buffer = '' // 缓冲区，用于处理消息粘连
     
     while (true) {
       const { done, value } = await reader!.read()
       if (done) break
       
-      const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split('\n')
+      // 1. 解码并拼接到缓冲区
+      buffer += decoder.decode(value, { stream: true })
       
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6)
+      // 2. 按双换行符切割 (SSE 标准分隔符)
+      const parts = buffer.split('\n\n')
+      
+      // 3. 最后一个部分可能是不完整的，保留在 buffer 中等待下一次读取
+      buffer = parts.pop() || '' 
+      
+      // 4. 处理完整的消息块
+      for (const part of parts) {
+        if (part.startsWith('data: ')) {
+          const dataStr = part.slice(6).trim()
+          if (!dataStr) continue
           if (dataStr === '[DONE]') {
             isRunning.value = false
             currentStep.value = '完成'
@@ -281,7 +290,9 @@ const startGeneration = async () => {
             // 实时流式内容
             if (data.display_content) displayContent.value = data.display_content
             
-          } catch (e) { console.error(e) }
+          } catch (e) {
+            console.error('JSON Parse Error:', e, dataStr)
+          }
         }
       }
     }

@@ -122,12 +122,12 @@ async def shutdown_event():
 if __name__ == "__main__":
     import uvicorn
     # === [核心修复] 增加超时参数 ===
-    # --timeout-keep-alive 300: 保持连接 5 分钟
+    # --timeout-keep-alive 600: 保持连接 10 分钟，匹配 Nginx 配置
     # --workers 1: 云服务器通常 CPU 只有 1-2 核，强制设为 1 个 worker 避免抢占资源导致死锁
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=8000,
-        timeout_keep_alive=300,
+        timeout_keep_alive=600,
         workers=1
     )
