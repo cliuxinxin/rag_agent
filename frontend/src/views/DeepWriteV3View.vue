@@ -189,14 +189,13 @@ const addLog = (text: string) => {
     time: dayjs().format('HH:mm:ss'),
     text
   })
-  scrollToLogBottom()
-}
-
-const scrollToLogBottom = () => {
+  
+  // 强制滚动到底部
   nextTick(() => {
     if (logScrollRef.value) {
+      // Element Plus Scrollbar 的 API
       const wrap = logScrollRef.value.wrapRef
-      wrap.scrollTop = wrap.scrollHeight
+      if(wrap) wrap.scrollTop = wrap.scrollHeight
     }
   })
 }
