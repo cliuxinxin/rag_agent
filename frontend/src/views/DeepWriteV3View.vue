@@ -45,6 +45,14 @@
                 <el-form-item label="写作要求">
                   <el-input v-model="form.instruction" placeholder="例如：风格犀利，深度分析，约2000字" />
                 </el-form-item>
+
+                <el-form-item label="模式选择">
+                  <el-switch
+                    v-model="form.fast_mode"
+                    active-text="🚀 极速模式 (省时 40%)"
+                    inactive-text="🐢 精修模式 (最高质量)"
+                  />
+                </el-form-item>
                 
                 <el-button type="primary" class="run-btn" @click="startGeneration" :loading="isRunning">
                   {{ isRunning ? '正在创作中...' : '🚀 开始深度创作' }}
@@ -65,7 +73,7 @@
             </div>
           </el-col>
 
-          <!-- 右侧：结果展示 -->
+          <!-- 右侧：结果展示 (增加 Tabs) -->
           <el-col :span="16" class="col-output">
             <div class="panel result-panel">
               <div class="result-header">
@@ -80,19 +88,37 @@
               </div>
               
               <div class="result-content">
-                <!-- 空状态 -->
+                <!-- 1. 结果为空时 -->
                 <div v-if="!displayContent && !isRunning" class="empty-state">
                   <el-icon :size="60" color="#ddd"><EditPen /></el-icon>
                   <p>在左侧输入内容并点击开始，AI 将自动分析并生成文章</p>
                 </div>
                 
-                <!-- 内容展示区 -->
-                <div v-else class="markdown-wrapper">
-                  <div class="markdown-body" v-html="renderedContent"></div>
-                  <!-- 正在生成的加载条 -->
-                  <div v-if="isRunning" class="typing-indicator">
-                    <span></span><span></span><span></span>
-                  </div>
+                <!-- 2. 有结果时：Tab 切换 -->
+                <div v-else class="content-wrapper">
+                  <el-tabs v-model="activeTab" class="custom-tabs">
+                    <!-- Tab 1: 文字视图 -->
+                    <el-tab-pane label="📝 文字排版" name="text">
+                      <div class="markdown-scroll-wrapper">
+                        <div class="markdown-body" v-html="renderedContent"></div>
+                        <!-- 正在生成的加载条 -->
+                        <div v-if="isRunning" class="typing-indicator">
+                          <span></span><span></span><span></span>
+                        </div>
+                      </div>
+                    </el-tab-pane>
+
+                    <!-- Tab 2: 知识卡片 (HTML排版 + 导出) -->
+                    <el-tab-pane label="🖼️ 知识卡片 (可导出)" name="card">
+                      <div class="card-scroll-wrapper">
+                        <KnowledgeCard 
+                          :title="generatedTopic || '未命名项目'" 
+                          :content="displayContent" 
+                          source-tag="DeepSeek Newsroom" 
+                        />
+                      </div>
+                    </el-tab-pane>
+                  </el-tabs>
                 </div>
               </div>
             </div>
@@ -111,10 +137,13 @@ import { EditPen } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { RUN_WRITE_V3_URL } from '../api/writeV3'
 import { getProjects, getProjectDetail } from '../api/write'
+// 引入知识卡片组件
+import KnowledgeCard from './KnowledgeCard.vue'
 
 const form = ref({
   content: '',
-  instruction: '风格专业，逻辑清晰'
+  instruction: '风格专业，逻辑清晰',
+  fast_mode: false
 })
 
 const isRunning = ref(false)
@@ -123,6 +152,7 @@ const generatedTopic = ref('')
 const displayContent = ref('') // 实时内容
 const currentStep = ref('')
 const logScrollRef = ref()
+const activeTab = ref('text') // 默认显示文字 Tab
 
 // 历史记录相关
 const historyList = ref<any[]>([])
@@ -149,6 +179,7 @@ const loadHistory = async (id: string) => {
     
     // 回显内容
     form.value.instruction = res.requirements || ''
+    form.value.fast_mode = false
     // 注意：source_data 里存的是原始素材
     form.value.content = res.source_data || ''
     
@@ -183,6 +214,7 @@ const startGeneration = async () => {
   displayContent.value = ''
   generatedTopic.value = ''
   currentStep.value = '启动中...'
+  activeTab.value = 'text' // 开始时切回文字视图
   addLog('系统启动，正在初始化 Agent...')
   
   try {
@@ -236,7 +268,8 @@ const startGeneration = async () => {
                 'Architect': '设计大纲',
                 'Writer': '正在撰写',
                 'Reviewer': '主编审阅',
-                'Polisher': '最终润色'
+                'Polisher': '最终润色',
+                'FastFinish': '极速归档'
               }
               currentStep.value = nodeMap[data.node] || data.node
             }
@@ -452,9 +485,48 @@ const addLog = (text: string) => {
 
 .result-content {
   flex: 1;
+  overflow: hidden; /* 内部滚动 */
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tab 样式修正 */
+.content-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.custom-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.el-tabs__content) {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+
+:deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 20px;
+  background: #fff;
+}
+
+.markdown-scroll-wrapper {
+  height: 100%;
   overflow-y: auto;
   padding: 30px 40px;
-  background: #fff;
+}
+
+.card-scroll-wrapper {
+  height: 100%;
+  overflow-y: auto;
+  background: #f0f2f5; /* 卡片背景色 */
+  padding: 20px;
 }
 
 .empty-state {
@@ -473,6 +545,8 @@ const addLog = (text: string) => {
 .markdown-body {
   line-height: 1.8;
   color: #333;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 /* 打字机光标动画 */

@@ -59,11 +59,16 @@ def topic_generator_node(state: DeepWriteState) -> dict:
     
     topic = invoke_with_logging(llm, [HumanMessage(content=prompt)], "TopicGen").strip().replace('"', '')
     
-    # 更新数据库中的标题
+    # === [关键修复] 立即更新数据库标题 ===
     if state.get("project_id"):
-        update_project_title(state["project_id"], topic)
+        try:
+            update_project_title(state["project_id"], topic)
+            logger.info(f"数据库标题已更新: {topic}")
+        except Exception as e:
+            logger.error(f"更新标题失败: {e}")
+    # ===================================
     
-    msg = f"💡 生成主题：{topic}"
+    msg = f"💡 已自动生成主题：{topic}"
     return {"topic": topic, "run_logs": [msg]}
 
 # 1. 分析师
