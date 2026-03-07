@@ -15,16 +15,17 @@ def get_analyst_prompt(raw_content: str, topic: str) -> str:
     请输出一份简短的【素材分析报告】，供后续架构师参考。
     """
 
-def get_architect_prompt(topic: str, analysis: str, instruction: str) -> str:
+def get_architect_prompt(topic: str, analysis: str, instruction: str, word_count: str) -> str:
     return f"""
     你是一名文章架构师。
     
     【主题】{topic}
     【素材分析】{analysis}
     【用户要求】{instruction}
+    【目标总字数】{word_count}
     
     请设计一份逻辑严密、起承转合流畅的文章大纲。
-    必须包含 4-8 个章节。
+    请根据总字数合理规划章节数量（通常 1000字约需3-4章，3000字需6-8章）。
     
     请严格输出 JSON 格式（List of Dicts）：
     [

@@ -17,6 +17,8 @@ class WriteRequest(BaseModel):
     content: str
     topic: Optional[str] = "" # 变成可选
     instruction: str = "风格专业，逻辑清晰"
+    fast_mode: bool = False
+    word_count: str = "1500" # [新增] 默认 1500
 
 @router.post("/run")
 async def run_write_v3(req: WriteRequest):
@@ -32,6 +34,9 @@ async def run_write_v3(req: WriteRequest):
         "topic": req.topic or "", # 空字符串，等待 TopicGen 生成
         "raw_content": req.content,
         "user_instruction": req.instruction,
+        # [新增] 存入状态
+        "target_word_count": f"{req.word_count}字", 
+        "fast_mode": req.fast_mode,
         "topic_analysis": "",
         "outline": [],
         "current_section_index": 0,

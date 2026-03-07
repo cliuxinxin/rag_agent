@@ -158,6 +158,8 @@ class DeepWriteState(TypedDict):
     topic: str                # 用户输入的主题/标题
     raw_content: str          # 用户粘贴的原始素材/长文本
     user_instruction: str     # 用户额外要求（如：风格、字数）
+    target_word_count: str    # [新增] 目标字数（如 "1500字"）
+    fast_mode: bool           # [新增] 极速模式标志
     
     # --- 2. 过程资产 ---
     # [分析师] 产出：核心立意与素材摘要

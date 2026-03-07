@@ -47,14 +47,9 @@
           <span>深度阅读</span>
         </el-menu-item>
 
-        <el-menu-item index="/deep-write">
-          <el-icon><Edit /></el-icon>
-          <span>深度写作</span>
-        </el-menu-item>
-
         <el-menu-item index="/deep-write-v3">
           <el-icon><Edit /></el-icon>
-          <span>新闻工作室 V3</span>
+          <span>新闻工作室</span>
         </el-menu-item>
 
         <el-menu-item index="/kb-management">

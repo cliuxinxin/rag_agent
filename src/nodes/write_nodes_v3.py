@@ -86,7 +86,15 @@ def analyst_node(state: DeepWriteState) -> dict:
 # 2. 架构师
 def architect_node(state: DeepWriteState) -> dict:
     llm = get_llm()
-    prompt = get_architect_prompt(state["topic"], state["topic_analysis"], state["user_instruction"])
+    # [修改] 获取字数，传入 prompt
+    word_count = state.get("target_word_count", "1500字")
+    
+    prompt = get_architect_prompt(
+        state["topic"], 
+        state["topic_analysis"], 
+        state["user_instruction"],
+        word_count # <--- 传入
+    )
     
     response = invoke_with_logging(llm, [HumanMessage(content=prompt)], "Architect")
     

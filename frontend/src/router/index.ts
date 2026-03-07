@@ -20,12 +20,6 @@ const routes = [
     meta: { title: '深度阅读' }
   },
   {
-    path: '/deep-write',
-    name: 'DeepWrite',
-    component: () => import('@/views/DeepWriteView.vue'),
-    meta: { title: '深度写作' }
-  },
-  {
     path: '/kb-management',
     name: 'KBManagement',
     component: () => import('@/views/KBManagement.vue'),
@@ -65,7 +59,7 @@ const routes = [
     path: '/deep-write-v3',
     name: 'DeepWriteV3',
     component: () => import('@/views/DeepWriteV3View.vue'),
-    meta: { title: '新闻工作室 V3' }
+    meta: { title: '新闻工作室' }
   }
 ]
 
