@@ -1,142 +1,157 @@
-import os
 import sqlite3
+import os
 import uuid
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
+from contextlib import contextmanager
 from src.logger import get_logger
 
-# 初始化日志
 logger = get_logger("Database")
 
 # === 路径配置 ===
-# 将数据库固定在项目根目录下的 storage 目录，避免 backend/ 与根目录运行时产生多个不同路径
 SRC_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = SRC_DIR.parent
 STORAGE_DIR = PROJECT_ROOT / "storage"
-STORAGE_DIR.mkdir(exist_ok=True)
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = STORAGE_DIR / "chat_history.db"
 
-# 简单的防止单次运行中重复刷日志
-# 注意：Streamlit 重运行时会重置，但可以减少单次会话内的重复日志
+class DatabaseManager:
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._init_optimization()
+
+    def _init_optimization(self):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception as e:
+            logger.error(f"DB 优化失败: {e}")
+
+    @contextmanager
+    def get_connection(self):
+        conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"❌ 数据库事务回滚: {e}", exc_info=True)
+            raise e
+        finally:
+            conn.close()
+
+db_manager = DatabaseManager(DB_PATH)
+
 _DB_INITIALIZED = False
 
 def init_db():
-    """初始化数据库表结构"""
     global _DB_INITIALIZED
-    
-    # 简单的防止单次运行中重复刷日志
-    # 如果想彻底防止 Streamlit 刷新带来的日志，可以用 st.session_state 判断
     if _DB_INITIALIZED:
         return
     
-    logger.info(f"正在初始化数据库: {DB_PATH}")
+    logger.info(f"初始化数据库: {DB_PATH}")
     try:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        # 开启 WAL 模式 (Write-Ahead Logging)，大幅提升并发读写能力
-        conn.execute("PRAGMA journal_mode=WAL;")
-        c = conn.cursor()
-        
-        # 1. 会话表
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-
-        # 2. 消息表
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            role TEXT,
-            content TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-        ''')
-
-        # 3. 深度解读报告表
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS research_reports (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            source_name TEXT,
-            content TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-
-        # 4. 会话 Artifact 表
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS session_artifacts (
-            session_id TEXT PRIMARY KEY,
-            doc_title TEXT,
-            doc_content TEXT,
-            qa_pairs TEXT,
-            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-        ''')
-        
-        # 5. 深度写作项目表 (V3 升级版)
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS writing_projects (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        with db_manager.get_connection() as conn:
+            c = conn.cursor()
             
-            requirements TEXT,     -- V2/V3 通用：用户需求配置
-            source_type TEXT,      -- "kb", "file", "text", "newsroom_v3"
-            
-            -- V3 新增核心字段
-            assets_data TEXT,      -- JSON List: [{"id":.., "type": "file/text", "content":...}]
-            outline_data TEXT,     -- JSON List: [{"id":.., "title":.., "status": "empty/draft/done", "content":...}]
-            
-            -- 兼容字段 (V2用，V3主要用 outline_data 拼装)
-            full_draft TEXT,
-            source_data TEXT,
-            research_report TEXT
-        )
-        ''')
-        
-        # 尝试做一次列迁移 (如果 assets_data 不存在)
-        try:
-            c.execute("ALTER TABLE writing_projects ADD COLUMN assets_data TEXT")
-        except:
-            pass
-        
-        # 6. 深度掌握会话表
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS mastery_sessions (
-            id TEXT PRIMARY KEY,
-            topic TEXT,
-            concepts_data TEXT, -- JSON List
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
 
-        conn.commit()
-        conn.close()
-        logger.info("数据库初始化完成")
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                role TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS research_reports (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                source_name TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS session_artifacts (
+                session_id TEXT PRIMARY KEY,
+                doc_title TEXT,
+                doc_content TEXT,
+                qa_pairs TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            ''')
+            
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS writing_projects (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                status TEXT DEFAULT 'draft',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                requirements TEXT,
+                source_type TEXT,
+                source_data TEXT,
+                outline_data TEXT,
+                full_draft TEXT,
+                assets_data TEXT,
+                logs TEXT
+            )
+            ''')
+            
+            # 自动迁移：检查并添加缺失的列
+            columns_to_ensure = [
+                ("logs", "TEXT"),
+                ("status", "TEXT DEFAULT 'draft'"),
+                ("assets_data", "TEXT")
+            ]
+            
+            for col_name, col_type in columns_to_ensure:
+                try:
+                    c.execute(f"ALTER TABLE writing_projects ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"🔄 [DB迁移] 成功添加新列: {col_name}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e):
+                        pass  # 列已存在，正常跳过
+                    else:
+                        logger.warning(f"⚠️ [DB迁移] 列 {col_name} 检查警告: {e}")
+            
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS mastery_sessions (
+                id TEXT PRIMARY KEY,
+                topic TEXT,
+                concepts_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+        logger.info("✅ 数据库结构检查/修复完成")
         _DB_INITIALIZED = True
     except Exception as e:
         logger.error(f"数据库初始化失败: {e}", exc_info=True)
         raise e
 
-# === 基础 Session 操作 ===
-
 def create_session(title: str = "新对话") -> str:
     session_id = str(uuid.uuid4())
     try:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        c = conn.cursor()
-        c.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, title))
-        conn.commit()
-        conn.close()
+        with db_manager.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, title))
         logger.info(f"创建新会话: {session_id} - {title}")
         return session_id
     except Exception as e:
@@ -144,322 +159,240 @@ def create_session(title: str = "新对话") -> str:
         return session_id
 
 def update_session_title(session_id: str, title: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
 
 def get_all_sessions() -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM sessions ORDER BY created_at DESC")
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM sessions ORDER BY created_at DESC")
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
 
 def delete_session(session_id: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-    c.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        c.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
 
 def add_message(session_id: str, role: str, content: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-              (session_id, role, content))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
+                  (session_id, role, content))
 
 def get_messages(session_id: str) -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-# === 报告管理 ===
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
 
 def save_report(title: str, source_name: str, content: str) -> str:
     report_id = str(uuid.uuid4())
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    if len(title) > 50: title = title[:50] + "..."
-    c.execute(
-        "INSERT INTO research_reports (id, title, source_name, content) VALUES (?, ?, ?, ?)",
-        (report_id, title, source_name, content)
-    )
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        if len(title) > 50: title = title[:50] + "..."
+        c.execute(
+            "INSERT INTO research_reports (id, title, source_name, content) VALUES (?, ?, ?, ?)",
+            (report_id, title, source_name, content)
+        )
     return report_id
 
 def get_all_reports() -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT id, title, source_name, created_at FROM research_reports ORDER BY created_at DESC")
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, title, source_name, created_at FROM research_reports ORDER BY created_at DESC")
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
 
 def get_report_content(report_id: str) -> Optional[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM research_reports WHERE id = ?", (report_id,))
-    row = c.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM research_reports WHERE id = ?", (report_id,))
+        row = c.fetchone()
+        return dict(row) if row else None
 
 def delete_report(report_id: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("DELETE FROM research_reports WHERE id = ?", (report_id,))
-    conn.commit()
-    conn.close()
-
-# === Artifact 管理 ===
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM research_reports WHERE id = ?", (report_id,))
 
 def save_session_artifact(session_id: str, doc_title: str, doc_content: str, qa_pairs: List[str]):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
-    c.execute('''
-    INSERT OR REPLACE INTO session_artifacts (session_id, doc_title, doc_content, qa_pairs)
-    VALUES (?, ?, ?, ?)
-    ''', (session_id, doc_title, doc_content, qa_pairs_json))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
+        c.execute('''
+        INSERT OR REPLACE INTO session_artifacts (session_id, doc_title, doc_content, qa_pairs)
+        VALUES (?, ?, ?, ?)
+        ''', (session_id, doc_title, doc_content, qa_pairs_json))
 
 def get_session_artifact(session_id: str) -> Optional[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM session_artifacts WHERE session_id = ?", (session_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        data = dict(row)
-        try:
-            data['qa_pairs'] = json.loads(data['qa_pairs'])
-        except:
-            data['qa_pairs'] = []
-        return data
-    return None
-
-def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
-    c.execute("UPDATE session_artifacts SET qa_pairs = ? WHERE session_id = ?", (qa_pairs_json, session_id))
-    conn.commit()
-    conn.close()
-
-# === 写作项目 CRUD (核心修复区域) ===
-
-def create_writing_project(title: str, requirements: str, source_type: str, source_data: str) -> str:
-    """
-    创建一个新的写作项目。
-    注意：source_data 存储的是原数据（KB名字列表 或 文本），而不是 full_content。
-    full_content 在运行时动态计算，不存数据库。
-    """
-    project_id = str(uuid.uuid4())
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    
-    c.execute('''
-        INSERT INTO writing_projects (id, title, requirements, source_type, source_data, outline_data, full_draft)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (project_id, title, requirements, source_type, source_data, "[]", ""))
-    
-    conn.commit()
-    conn.close()
-    return project_id
-
-def get_writing_project(project_id: str) -> Optional[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM writing_projects WHERE id = ?", (project_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        data = dict(row)
-        try:
-            data['outline_data'] = json.loads(data['outline_data'])
-        except:
-            data['outline_data'] = []
-        return data
-    return None
-
-def update_project_outline(project_id: str, outline_data: List[Dict], research_report: str = None):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    outline_json = json.dumps(outline_data, ensure_ascii=False)
-    
-    if research_report:
-        c.execute("UPDATE writing_projects SET outline_data = ?, research_report = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-                  (outline_json, research_report, project_id))
-    else:
-        c.execute("UPDATE writing_projects SET outline_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-                  (outline_json, project_id))
-    conn.commit()
-    conn.close()
-
-def update_project_draft(project_id: str, full_draft: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE writing_projects SET full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-              (full_draft, project_id))
-    conn.commit()
-    conn.close()
-
-def update_project_title(project_id: str, title: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE writing_projects SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-              (title, project_id))
-    conn.commit()
-    conn.close()
-
-def get_all_projects() -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM writing_projects ORDER BY updated_at DESC")
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-
-def get_projects_by_source(source_type: str) -> List[Dict]:
-    """按 source_type 查询项目列表（含更新时间）"""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, title, source_type, created_at, updated_at FROM writing_projects WHERE source_type = ? ORDER BY updated_at DESC",
-        (source_type,),
-    )
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-def delete_project(project_id: str):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("DELETE FROM writing_projects WHERE id = ?", (project_id,))
-    conn.commit()
-    conn.close()
-
-
-# === 深度掌握 (Mastery) ===
-
-def create_mastery_session(topic: str) -> str:
-    session_id = str(uuid.uuid4())
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    # 复用 writing_projects 表结构，或者新建表
-    # 这里我们简单起见，新建一个表
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS mastery_sessions (
-        id TEXT PRIMARY KEY,
-        topic TEXT,
-        concepts_data TEXT, -- JSON List
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-    c.execute("INSERT INTO mastery_sessions (id, topic, concepts_data) VALUES (?, ?, ?)", 
-              (session_id, topic, "[]"))
-    conn.commit()
-    conn.close()
-    return session_id
-
-def update_mastery_concepts(session_id: str, concepts: List[dict]):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
-              (json.dumps(concepts, ensure_ascii=False), session_id))
-    conn.commit()
-    conn.close()
-
-def get_mastery_session(session_id: str) -> Optional[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        c.execute("SELECT * FROM mastery_sessions WHERE id = ?", (session_id,))
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM session_artifacts WHERE session_id = ?", (session_id,))
         row = c.fetchone()
         if row:
             data = dict(row)
-            data['concepts_data'] = json.loads(data['concepts_data'])
+            try:
+                data['qa_pairs'] = json.loads(data['qa_pairs'])
+            except:
+                data['qa_pairs'] = []
             return data
-    except:
+    return None
+
+def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        qa_pairs_json = json.dumps(qa_pairs, ensure_ascii=False)
+        c.execute("UPDATE session_artifacts SET qa_pairs = ? WHERE session_id = ?", (qa_pairs_json, session_id))
+
+# === 核心 CRUD 修复 ===
+
+def create_writing_project(title: str, requirements: str, source_type: str, source_data: str) -> str:
+    project_id = str(uuid.uuid4())
+    logger.info(f"正在创建项目 ID: {project_id} | Title: {title}")
+    
+    with db_manager.get_connection() as conn:
+        cursor = conn.execute('''
+            INSERT INTO writing_projects (id, title, requirements, source_type, source_data, outline_data, full_draft, logs)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (project_id, title, requirements, source_type, source_data, "[]", "", "[]"))
+        logger.info(f"✅ 项目创建成功，影响行数: {cursor.rowcount}")
+        
+    return project_id
+
+def update_project_title(project_id: str, title: str):
+    with db_manager.get_connection() as conn:
+        cursor = conn.execute("UPDATE writing_projects SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (title, project_id))
+        if cursor.rowcount == 0:
+            logger.error(f"❌ 标题更新失败：找不到 ID {project_id}")
+        else:
+            logger.info(f"✅ 标题更新成功: {title}")
+
+def update_project_draft(project_id: str, full_draft: str):
+    logger.info(f"正在保存草稿 ID: {project_id} | 长度: {len(full_draft)} chars")
+    
+    with db_manager.get_connection() as conn:
+        cursor = conn.execute("UPDATE writing_projects SET full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (full_draft, project_id))
+        
+        if cursor.rowcount == 0:
+            logger.error(f"❌ 草稿保存失败：数据库中找不到 ID {project_id}")
+        else:
+            logger.info(f"✅ 草稿保存成功 (Rows: {cursor.rowcount})")
+
+def update_project_outline(project_id: str, outline_data: list):
+    with db_manager.get_connection() as conn:
+        conn.execute("UPDATE writing_projects SET outline_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (json.dumps(outline_data, ensure_ascii=False), project_id))
+
+def get_writing_project(project_id: str) -> dict:
+    with db_manager.get_connection() as conn:
+        row = conn.execute("SELECT * FROM writing_projects WHERE id = ?", (project_id,)).fetchone()
+        if row:
+            res = dict(row)
+            for field in ['requirements', 'outline_data', 'assets_data', 'logs']:
+                if res.get(field):
+                    try:
+                        res[field] = json.loads(res[field])
+                    except: res[field] = []
+            return res
+    return None
+
+def get_all_projects():
+    with db_manager.get_connection() as conn:
+        cursor = conn.execute("SELECT id, title, source_type, created_at, updated_at FROM writing_projects ORDER BY updated_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+        
+def delete_project(project_id: str):
+    with db_manager.get_connection() as conn:
+        conn.execute("DELETE FROM writing_projects WHERE id = ?", (project_id,))
+
+def get_projects_by_source(source_type: str) -> List[Dict]:
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, title, source_type, created_at, updated_at FROM writing_projects WHERE source_type = ? ORDER BY updated_at DESC",
+            (source_type,),
+        )
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
+
+def create_mastery_session(topic: str) -> str:
+    session_id = str(uuid.uuid4())
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS mastery_sessions (
+            id TEXT PRIMARY KEY,
+            topic TEXT,
+            concepts_data TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        c.execute("INSERT INTO mastery_sessions (id, topic, concepts_data) VALUES (?, ?, ?)", 
+                  (session_id, topic, "[]"))
+    return session_id
+
+def update_mastery_concepts(session_id: str, concepts: List[dict]):
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
+                  (json.dumps(concepts, ensure_ascii=False), session_id))
+
+def get_mastery_session(session_id: str) -> Optional[Dict]:
+    try:
+        with db_manager.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM mastery_sessions WHERE id = ?", (session_id,))
+            row = c.fetchone()
+            if row:
+                data = dict(row)
+                data['concepts_data'] = json.loads(data['concepts_data'])
+                return data
+    except Exception as e:
+        logger.error(f"获取 master session 失败: {e}")
         return None
-    finally:
-        conn.close()
     return None
 
 def get_all_mastery_sessions() -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
     try:
-        c.execute("SELECT * FROM mastery_sessions ORDER BY created_at DESC")
-        rows = c.fetchall()
-        results = []
-        for row in rows:
-            d = dict(row)
-            # === 修复：在这里统一解析 JSON，防止前端拿到字符串 ===
-            try:
-                d['concepts_data'] = json.loads(d['concepts_data'])
-            except:
-                d['concepts_data'] = []
-            results.append(d)
-        return results
+        with db_manager.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM mastery_sessions ORDER BY created_at DESC")
+            rows = c.fetchall()
+            results = []
+            for row in rows:
+                d = dict(row)
+                try:
+                    d['concepts_data'] = json.loads(d['concepts_data'])
+                except:
+                    d['concepts_data'] = []
+                results.append(d)
+            return results
     except Exception as e:
         logger.error(f"获取列表失败: {e}")
         return []
-    finally:
-        conn.close()
 
 def update_mastery_session_data(session_id: str, concepts_data: List[dict]):
-    """
-    保存完整的概念列表，包含已经生成的 detail 和 chat_history
-    """
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    # 序列化整个列表
-    json_str = json.dumps(concepts_data, ensure_ascii=False)
-    c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
-              (json_str, session_id))
-    conn.commit()
-    conn.close()
-
-# === V3 新增 CRUD ===
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        json_str = json.dumps(concepts_data, ensure_ascii=False)
+        c.execute("UPDATE mastery_sessions SET concepts_data = ? WHERE id = ?", 
+                  (json_str, session_id))
 
 def update_project_assets(project_id: str, assets: List[Dict]):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE writing_projects SET assets_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-              (json.dumps(assets, ensure_ascii=False), project_id))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE writing_projects SET assets_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (json.dumps(assets, ensure_ascii=False), project_id))
 
 def update_project_section_content(project_id: str, outline_data: List[Dict]):
-    """更新大纲及各章节内容"""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    # 顺便把 full_draft 拼出来，方便预览
-    full_text = "\n\n".join([f"## {sec['title']}\n\n{sec.get('content','')}" for sec in outline_data])
-    
-    c.execute("UPDATE writing_projects SET outline_data = ?, full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-              (json.dumps(outline_data, ensure_ascii=False), full_text, project_id))
-    conn.commit()
-    conn.close()
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        full_text = "\n\n".join([f"## {sec['title']}\n\n{sec.get('content','')}" for sec in outline_data])
+        c.execute("UPDATE writing_projects SET outline_data = ?, full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (json.dumps(outline_data, ensure_ascii=False), full_text, project_id))

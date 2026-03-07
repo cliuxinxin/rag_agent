@@ -1,59 +1,67 @@
 import logging
+import sys
 import os
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
-# 创建日志目录
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 
+# 定义日志格式
+# [时间] [级别] [模块] [TraceID] 信息
+FORMAT_STR = '[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s'
+
 def get_logger(name: str):
-    """
-    获取配置好的 logger 实例
-    """
     logger = logging.getLogger(name)
-    
-    # 防止重复添加 handler (Streamlit 重运行特性导致)
-    if logger.hasHandlers():
-        return logger
-        
     logger.setLevel(logging.INFO)
+    
+    # 避免重复添加 Handler
+    if logger.handlers:
+        return logger
 
-    # 1. 格式化器
-    formatter = logging.Formatter(
-        '[%(asctime)s] [%(levelname)s] [%(filename)s:%(lineno)d] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    formatter = logging.Formatter(FORMAT_STR, datefmt='%Y-%m-%d %H:%M:%S')
 
-    # 2. 文件处理器 (按大小轮转，最大 5MB，保留 5 个备份)
+    # 1. 控制台输出 (方便 Docker logs 查看)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # 2. 文件输出 (App.log) - 记录所有信息
     file_handler = RotatingFileHandler(
         LOG_DIR / "app.log", 
-        maxBytes=5*1024*1024, 
+        maxBytes=10*1024*1024, # 10MB
         backupCount=5, 
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
-
-    # 3. 错误日志单独文件
-    error_file_handler = RotatingFileHandler(
-        LOG_DIR / "error.log", 
-        maxBytes=5*1024*1024, 
-        backupCount=5, 
-        encoding='utf-8'
-    )
-    error_file_handler.setFormatter(formatter)
-    error_file_handler.setLevel(logging.ERROR)
-
-    # 4. 控制台处理器
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.INFO)
-
-    # 添加处理器
     logger.addHandler(file_handler)
-    logger.addHandler(error_file_handler)
-    logger.addHandler(console_handler)
 
     return logger
 
+# 创建一个专门用于记录 Prompt 的 logger
+trace_logger = logging.getLogger("LLM_Trace")
+trace_logger.setLevel(logging.INFO)
+# 防止向上传播到 root logger，避免重复输出
+trace_logger.propagate = False
+
+# 检查是否已经有 handler，避免重复添加
+if not trace_logger.handlers:
+    trace_handler = RotatingFileHandler(
+        LOG_DIR / "llm_trace.log",
+        maxBytes=20*1024*1024, # 20MB
+        backupCount=3,
+        encoding='utf-8'
+    )
+    trace_handler.setFormatter(logging.Formatter('%(asctime)s\n%(message)s\n' + '-'*80 + '\n'))
+    trace_logger.addHandler(trace_handler)
+
+def log_llm_trace(stage: str, prompt: str, response: str, duration: float):
+    """记录详细的 LLM 调用链路"""
+    msg = f"""【Stage】: {stage}
+【Time】: {duration:.2f}s
+【Prompt Preview】:
+{prompt[:1000]} ... (length: {len(prompt)})
+【Response Preview】:
+{response[:1000]} ... (length: {len(response)})
+"""
+    trace_logger.info(msg)
