@@ -318,11 +318,19 @@ def update_project_draft(project_id: str, full_draft: str):
     conn.commit()
     conn.close()
 
+def update_project_title(project_id: str, title: str):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("UPDATE writing_projects SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+              (title, project_id))
+    conn.commit()
+    conn.close()
+
 def get_all_projects() -> List[Dict]:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT id, title, created_at FROM writing_projects ORDER BY updated_at DESC")
+    c.execute("SELECT * FROM writing_projects ORDER BY updated_at DESC")
     rows = c.fetchall()
     conn.close()
     return [dict(row) for row in rows]

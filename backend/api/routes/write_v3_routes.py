@@ -3,9 +3,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import json
+import uuid
 from src.graphs.write_graph_v3 import write_graph_v3
 from src.state import DeepWriteState
 from src.logger import get_logger
+from src.db import create_writing_project
 
 logger = get_logger("API_WriteV3")
 
@@ -22,6 +24,9 @@ async def run_write_v3(req: WriteRequest):
     
     logger.info(f"收到深度写作请求 | 字数: {len(req.content)} | 要求: {req.instruction}")
     
+    # 创建新的 Project ID
+    project_id = str(uuid.uuid4())
+    
     # 初始化状态
     initial_state: DeepWriteState = {
         "topic": req.topic or "", # 空字符串，等待 TopicGen 生成
@@ -33,11 +38,20 @@ async def run_write_v3(req: WriteRequest):
         "section_drafts": [],
         "critique_notes": "",
         "final_article": "",
-        "run_logs": []
+        "run_logs": [],
+        "project_id": project_id  # 存入状态方便后续使用
     }
     
     async def event_generator():
         try:
+            # 先在数据库占个位
+            create_writing_project(
+                title=req.topic or "未命名项目", 
+                requirements=req.instruction,
+                source_type="newsroom_v3",
+                source_data=req.content[:5000]  # 只存前5000字作为快照
+            )
+            
             # 维护一个累积的草稿，用于前端实时展示
             accumulated_drafts = [] 
             

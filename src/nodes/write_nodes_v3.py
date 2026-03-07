@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage
 from src.nodes.common import get_llm
 from src.state import DeepWriteState
 from src.logger import get_logger
+from src.db import update_project_draft, update_project_outline, update_project_title
 from src.prompts_v3 import (
     get_topic_gen_prompt,
     get_analyst_prompt,
@@ -57,6 +58,10 @@ def topic_generator_node(state: DeepWriteState) -> dict:
     prompt = get_topic_gen_prompt(content)
     
     topic = invoke_with_logging(llm, [HumanMessage(content=prompt)], "TopicGen").strip().replace('"', '')
+    
+    # 更新数据库中的标题
+    if state.get("project_id"):
+        update_project_title(state["project_id"], topic)
     
     msg = f"💡 生成主题：{topic}"
     return {"topic": topic, "run_logs": [msg]}
@@ -160,6 +165,12 @@ def polisher_node(state: DeepWriteState) -> dict:
         logger.error(f"润色师超时或失败，降级为返回初稿: {e}")
         final_article = full_draft + "\n\n> (注：由于篇幅过长，AI 润色超时，以上为初稿内容)"
         log_msg = "⚠️ [润色师] 响应超时，已展示初稿"
+    
+    # 保存到数据库
+    if state.get("project_id"):
+        update_project_draft(state["project_id"], final_article)
+        if state.get("outline"):
+            update_project_outline(state["project_id"], state["outline"])
 
     return {
         "final_article": final_article,

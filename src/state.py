@@ -151,6 +151,9 @@ def add_list(left: list, right: list):
 
 # === DeepWrite V3 专用状态 ===
 class DeepWriteState(TypedDict):
+    # --- 0. 项目标识 ---
+    project_id: str           # 数据库项目ID
+    
     # --- 1. 输入 ---
     topic: str                # 用户输入的主题/标题
     raw_content: str          # 用户粘贴的原始素材/长文本
