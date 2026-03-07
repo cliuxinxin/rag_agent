@@ -16,7 +16,7 @@ class HunyuanEmbeddings(Embeddings):
         self.api_url = "https://api.hunyuan.cloud.tencent.com/v1/embeddings"
         self.model_name = "hunyuan-embedding"
         # 设置并发线程数，建议 5-10
-        self.max_workers = 5 # 降低并发数，防止触发腾讯 API 限流导致大量失败
+        self.max_workers = 2 # 降低并发数，防止触发腾讯 API 限流和内存不足
 
     def _call_api_single(self, text: str) -> Optional[List[float]]:
         """单次 API 调用"""
