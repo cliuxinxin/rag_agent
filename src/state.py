@@ -158,10 +158,14 @@ class DeepWriteState(TypedDict):
     topic: str                # 用户输入的主题/标题
     raw_content: str          # 用户粘贴的原始素材/长文本
     user_instruction: str     # 用户额外要求（如：风格、字数）
-    target_word_count: str    # [新增] 目标字数（如 "1500字"）
-    fast_mode: bool           # [新增] 极速模式标志
+    target_word_count: str    # 目标字数（如 "1500字"）
+    fast_mode: bool           # 极速模式标志
     
-    # --- 2. 过程资产 ---
+    # --- [新增] 2. 角度选择阶段 ---
+    angles_options: List[dict]     # AI 生成的 3 个选项
+    selected_angle_data: dict      # 用户选定的角度数据
+    
+    # --- 3. 过程资产 ---
     # [分析师] 产出：核心立意与素材摘要
     topic_analysis: str       
     
@@ -176,7 +180,7 @@ class DeepWriteState(TypedDict):
     # [主编] 产出：修改意见
     critique_notes: str       
     
-    # --- 3. 输出 ---
+    # --- 4. 输出 ---
     # [润色师] 产出：最终成稿
     final_article: str        
     

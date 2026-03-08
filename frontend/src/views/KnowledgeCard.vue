@@ -180,13 +180,13 @@ const downloadCard = async () => {
 
 .card-body {
   padding: 60px 80px;
-  column-count: 3;
-  column-gap: 60px;
-  column-rule: 1px solid #e2e8f0;
+  /* 移除 column-count: 3 和 column-gap, column-rule 改为单列流式 */
   color: #334155;
-  font-size: 22px;
-  line-height: 1.8;
+  font-size: 24px;
+  line-height: 2.0;
   text-align: justify;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .card-body :deep(h1), .card-body :deep(h2), .card-body :deep(h3) {

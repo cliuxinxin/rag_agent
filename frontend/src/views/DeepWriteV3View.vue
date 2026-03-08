@@ -1,141 +1,153 @@
 <template>
   <div class="v3-container">
-    <el-container style="height: 100%">
-      
-      <!-- 1. 历史记录侧边栏 -->
-      <el-aside width="240px" class="history-aside">
-        <div class="history-header">
-          <span>📜 历史记录</span>
-          <div class="header-actions">
-            <el-button type="primary" link :icon="Plus" @click="resetForm" title="新建项目">新建</el-button>
-            <el-button type="text" :icon="Refresh" @click="fetchHistory" title="刷新"></el-button>
+    <!-- 顶部步骤条 -->
+    <header class="wizard-header">
+      <div class="brand">📰 DeepSeek Newsroom</div>
+      <el-steps :active="activeStep" simple finish-status="success" class="custom-steps">
+        <el-step title="素材与配置" icon="Upload" />
+        <el-step title="方向决策" icon="Compass" />
+        <el-step title="生成与润色" icon="MagicStick" />
+        <el-step title="成稿发布" icon="DocumentChecked" />
+      </el-steps>
+      <div class="history-trigger">
+        <el-button @click="drawerVisible = true" circle icon="Clock" title="历史记录"></el-button>
+      </div>
+    </header>
+
+    <main class="wizard-content">
+      <!-- STEP 0: 配置 -->
+      <transition name="fade-slide" mode="out-in">
+        <div v-if="activeStep === 0" key="step0" class="step-card">
+          <div class="card-title">📝 第一步：导入素材与要求</div>
+          <el-form label-position="top" size="large">
+            <el-form-item label="原始素材 (支持长文本)">
+              <el-input 
+                v-model="form.content" 
+                type="textarea" 
+                :rows="12" 
+                placeholder="在此粘贴参考资料、会议纪要或凌乱的笔记..." 
+                resize="none"
+              />
+            </el-form-item>
+            <el-form-item label="写作意图">
+              <el-input v-model="form.instruction" placeholder="例如：写一篇专业的行业分析报告，语气客观" />
+            </el-form-item>
+            <el-button type="primary" size="large" class="next-btn" @click="submitInit" :loading="isInitializing">
+              {{ isInitializing ? '正在分析素材...' : '下一步：策划切入方向 ➡️' }}
+            </el-button>
+          </el-form>
+        </div>
+
+        <!-- STEP 1: 选择方向 -->
+        <div v-else-if="activeStep === 1" key="step1" class="step-card">
+          <div class="card-title">🧭 第二步：选择切入角度</div>
+          <p class="subtitle">AI 基于素材为您策划了以下 3 个方向，请选择一个作为文章基调：</p>
+          
+          <div class="angles-grid">
+            <div 
+              v-for="angle in angleOptions" 
+              :key="angle.id" 
+              class="angle-box"
+              :class="{ selected: selectedAngle?.id === angle.id }"
+              @click="selectedAngle = angle"
+            >
+              <div class="angle-icon">{{ angle.id }}</div>
+              <h3>{{ angle.label }}</h3>
+              <p>{{ angle.description }}</p>
+              <div class="check-mark" v-if="selectedAngle?.id === angle.id">
+                <el-icon><Check /></el-icon>
+              </div>
+            </div>
+          </div>
+
+          <div class="step-actions">
+            <el-button @click="activeStep = 0">上一步</el-button>
+            <el-row :gutter="20" style="width: 400px; display: inline-flex; margin-left: 20px;">
+               <el-col :span="12">
+                 <el-select v-model="form.word_count" placeholder="字数">
+                    <el-option label="1500字" value="1500" />
+                    <el-option label="3000字" value="3000" />
+                    <el-option label="5000字" value="5000" />
+                 </el-select>
+               </el-col>
+               <el-col :span="12">
+                 <el-switch v-model="form.fast_mode" active-text="极速模式" inactive-text="精修模式" />
+               </el-col>
+            </el-row>
+            <el-button type="primary" @click="startRun" :disabled="!selectedAngle || isRunning" :loading="isRunning">
+              开始深度写作 🚀
+            </el-button>
+            <el-button type="danger" @click="stopGeneration" v-if="isRunning || isInitializing">
+              停止生成 🛑
+            </el-button>
           </div>
         </div>
-        <el-scrollbar>
-          <div v-if="historyList.length === 0" class="history-empty">暂无记录</div>
-          <div 
-            v-for="item in historyList" 
-            :key="item.id" 
-            class="history-item"
-            :class="{ active: currentId === item.id }"
-            @click="loadHistory(item.id)"
-          >
-            <div class="item-title" :title="item.title">
-              {{ item.title && item.title !== '未命名项目' ? item.title : '未命名' }}
-            </div>
-            <div class="item-date">{{ formatDateShort(item.updated_at) }}</div>
-          </div>
-        </el-scrollbar>
-      </el-aside>
 
-      <!-- 2. 主内容区 -->
-      <el-main class="main-workspace">
-        <el-row :gutter="20" style="height: 100%">
-          <!-- 左侧：配置 -->
-          <el-col :span="8" class="col-input">
-            <div class="panel input-panel">
-              <h3>📝 创作配置</h3>
-              <el-form label-position="top" size="default">
-                <el-form-item label="原始素材">
-                  <el-input 
-                    v-model="form.content" 
-                    type="textarea" 
-                    :rows="10" 
-                    placeholder="在此粘贴参考资料..." 
-                    resize="none"
-                  />
-                </el-form-item>
-                
-                <el-form-item label="写作要求">
-                  <el-input v-model="form.instruction" placeholder="例如：风格专业，逻辑清晰" />
-                </el-form-item>
-
-                <el-row :gutter="10">
-                  <el-col :span="12">
-                    <el-form-item label="篇幅控制">
-                      <el-select v-model="form.word_count" style="width: 100%">
-                        <el-option label="短讯 (500字)" value="500" />
-                        <el-option label="标准 (1500字)" value="1500" />
-                        <el-option label="深度 (3000字)" value="3000" />
-                        <el-option label="长文 (5000字)" value="5000" />
-                      </el-select>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="12">
-                    <el-form-item label="模式">
-                      <el-switch
-                        v-model="form.fast_mode"
-                        active-text="极速"
-                        inactive-text="精修"
-                      />
-                    </el-form-item>
-                  </el-col>
-                </el-row>
-                
-                <el-button type="primary" class="run-btn" @click="startGeneration" :loading="isRunning">
-                  {{ isRunning ? '创作中...' : '🚀 开始创作' }}
-                </el-button>
-              </el-form>
-            </div>
-            
-            <div class="panel log-panel">
-              <h4>⚙️ 执行日志</h4>
-              <el-scrollbar ref="logScrollRef" class="log-scroll">
-                <div v-if="logs.length === 0" class="log-empty">暂无日志</div>
-                <div v-for="(log, i) in logs" :key="i" class="log-item">
-                  <span class="log-time">{{ log.time }}</span>
-                  <span class="log-text">{{ log.text }}</span>
+        <!-- STEP 2 & 3: 生成结果 -->
+        <div v-else key="step2" class="step-card full-width">
+          <div class="result-layout">
+            <!-- 左侧：预览与内容 -->
+            <div class="preview-panel">
+              <div class="preview-header">
+                <h2>{{ generatedTopic || '正在拟定标题...' }}</h2>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div class="status-badge" v-if="isRunning">
+                    <span class="dot"></span> AI 正在创作中...
+                  </div>
+                  <el-button type="danger" size="small" @click="stopGeneration" v-if="isRunning">
+                    停止
+                  </el-button>
+                </div>
+              </div>
+              <el-scrollbar height="calc(100vh - 250px)">
+                <!-- 文章内容区 -->
+                <div class="article-container">
+                   <div class="markdown-body" v-html="renderedContent"></div>
                 </div>
               </el-scrollbar>
             </div>
-          </el-col>
 
-          <!-- 右侧：结果 -->
-          <el-col :span="16" class="col-output">
-            <div class="panel result-panel">
-              <div class="result-header">
-                <div class="header-left">
-                  <h3>📄 生成结果</h3>
-                  <span v-if="generatedTopic" class="topic-tag">{{ generatedTopic }}</span>
+            <!-- 右侧：日志抽屉 -->
+            <div class="log-drawer">
+              <div class="drawer-header">⚙️ 思考与执行流</div>
+              <el-scrollbar ref="logScroll" height="calc(100vh - 250px)">
+                <div v-for="(log, i) in runLogs" :key="i" class="log-entry">
+                  <span class="log-time">{{ log.time }}</span>
+                  <span class="log-msg">{{ log.text }}</span>
                 </div>
-                <div class="header-right">
-                  <el-tag v-if="currentStep" effect="dark">{{ currentStep }}</el-tag>
+                <div v-if="isRunning" class="loading-spinner">
+                  <el-icon class="is-loading"><Loading /></el-icon>
                 </div>
-              </div>
+              </el-scrollbar>
               
-              <div class="result-content">
-                <div v-if="!displayContent && !isRunning" class="empty-state">
-                  <el-icon :size="60" color="#ddd"><EditPen /></el-icon>
-                  <p>在左侧输入内容并点击开始</p>
-                </div>
-                
-                <div v-else class="content-wrapper">
-                  <el-tabs v-model="activeTab" class="custom-tabs">
-                    <el-tab-pane label="📝 文字排版" name="text">
-                      <div class="markdown-scroll-wrapper">
-                        <div class="markdown-body" v-html="renderedContent"></div>
-                        <div v-if="isRunning" class="typing-indicator">
-                          <span></span><span></span><span></span>
-                        </div>
-                      </div>
-                    </el-tab-pane>
-                    <el-tab-pane label="🖼️ 知识卡片" name="card">
-                      <div class="card-scroll-wrapper">
-                        <KnowledgeCard 
-                          :title="generatedTopic || '未命名项目'" 
-                          :content="displayContent" 
-                          source-tag="DeepSeek Newsroom" 
-                        />
-                      </div>
-                    </el-tab-pane>
-                  </el-tabs>
-                </div>
+              <div class="drawer-footer" v-if="activeStep === 3">
+                <el-button type="primary" @click="resetAll">开启新项目</el-button>
+                <el-button @click="showDebugLogs">查看完整调试日志</el-button>
               </div>
             </div>
-          </el-col>
-        </el-row>
-      </el-main>
-    </el-container>
+          </div>
+        </div>
+      </transition>
+    </main>
+
+    <!-- 历史记录抽屉 -->
+    <el-drawer v-model="drawerVisible" title="📜 历史项目" size="300px">
+      <div v-for="p in historyList" :key="p.id" class="history-row" @click="loadProject(p.id)">
+        <div class="h-title">{{ p.title || '未命名' }}</div>
+        <div class="h-date">{{ formatDate(p.updated_at) }}</div>
+      </div>
+    </el-drawer>
+    
+    <!-- 详细调试日志弹窗 -->
+    <el-dialog v-model="debugLogVisible" title="🔬 完整 LLM 交互日志" width="80%">
+      <el-table :data="detailedLogs" stripe height="500">
+        <el-table-column prop="timestamp" label="时间" width="160" />
+        <el-table-column prop="stage" label="阶段" width="120" />
+        <el-table-column prop="duration" label="耗时" width="100" />
+        <el-table-column prop="input_prompt_preview" label="Input (Prompt)" show-overflow-tooltip />
+        <el-table-column prop="output_response" label="Output (AI)" show-overflow-tooltip />
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -144,210 +156,533 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { marked } from 'marked'
 import apiClient from '../api'
 import { ElMessage } from 'element-plus'
-import { EditPen, Refresh, Plus } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
-import KnowledgeCard from './KnowledgeCard.vue'
-import { getProjects, getProjectDetail } from '../api/write'
+import { Check, Loading, Clock } from '@element-plus/icons-vue'
+
+// State
+const activeStep = ref(0)
+const isInitializing = ref(false)
+const isRunning = ref(false)
+const drawerVisible = ref(false)
+const debugLogVisible = ref(false)
+let abortController: AbortController | null = null
 
 const form = ref({
   content: '',
   instruction: '风格专业，逻辑清晰',
-  fast_mode: false,
-  word_count: '1500'
+  word_count: '1500',
+  fast_mode: false
 })
 
-const isRunning = ref(false)
-const logs = ref<any[]>([])
+const projectId = ref('')
+const angleOptions = ref<any[]>([])
+const selectedAngle = ref<any>(null)
 const generatedTopic = ref('')
-const displayContent = ref('') 
-const currentStep = ref('')
-const logScrollRef = ref()
-const activeTab = ref('text')
+const displayContent = ref('')
+const runLogs = ref<any[]>([])
+const detailedLogs = ref<any[]>([])
 const historyList = ref<any[]>([])
-const currentId = ref('')
+const logScroll = ref()
 
 const renderedContent = computed(() => marked(displayContent.value || ''))
 
-// --- 核心修复：重置功能 ---
-const resetForm = () => {
-  currentId.value = ''
-  form.value = {
-    content: '',
-    instruction: '风格专业，逻辑清晰',
-    fast_mode: false,
-    word_count: '1500'
+const stopGeneration = () => {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+    isRunning.value = false
+    isInitializing.value = false
+    addLog('🛑 用户手动终止任务')
+    ElMessage.info('已停止生成')
   }
+}
+
+// Methods
+const addLog = (text: string) => {
+  runLogs.value.push({ time: dayjs().format('HH:mm:ss'), text })
+  nextTick(() => {
+    if(logScroll.value) logScroll.value.setScrollTop(99999)
+  })
+}
+
+const formatDate = (str: string) => dayjs(str).format('YYYY-MM-DD HH:mm')
+
+// Step 1: 提交素材，获取角度
+const submitInit = async () => {
+  if(!form.value.content) return ElMessage.warning('请输入素材')
+  isInitializing.value = true
+  runLogs.value = []
+  
+  try {
+    abortController = new AbortController()
+    const response = await fetch(`${apiClient.defaults.baseURL}/api/write/v3/init_proposal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: form.value.content, instruction: form.value.instruction }),
+      signal: abortController.signal
+    })
+    
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    while (true) {
+      const { done, value } = await reader!.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || ''
+      
+      for (const line of lines) {
+        if(line.startsWith('data: ')) {
+          const dataStr = line.slice(6).trim()
+          if (dataStr === '[DONE]') {
+            break
+          }
+          const data = JSON.parse(dataStr)
+          if (data.type === 'angles') {
+            angleOptions.value = data.data
+            projectId.value = data.pid
+            activeStep.value = 1 // 进入下一步
+          }
+          if (data.type === 'log') {
+            addLog(data.message)
+          }
+        }
+      }
+    }
+  } catch(e) { 
+    ElMessage.error('分析失败: ' + e) 
+  } 
+  finally { 
+    isInitializing.value = false 
+  }
+}
+
+// Step 2: 提交选择，开始生成
+const startRun = async () => {
+  activeStep.value = 2
+  isRunning.value = true
+  runLogs.value = []
   displayContent.value = ''
   generatedTopic.value = ''
-  currentStep.value = ''
-  logs.value = []
-  ElMessage.success('已开启新项目')
+  
+  try {
+    abortController = new AbortController()
+    const response = await fetch(`${apiClient.defaults.baseURL}/api/write/v3/run_generation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId.value,
+        selected_angle: selectedAngle.value,
+        word_count: form.value.word_count,
+        fast_mode: form.value.fast_mode
+      }),
+      signal: abortController.signal
+    })
+    
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    while (true) {
+      const { done, value } = await reader!.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || ''
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6).trim()
+          if (dataStr === '[DONE]') {
+            isRunning.value = false
+            activeStep.value = 3 // 完成
+            addLog('🎉 全文生成完毕')
+            continue
+          }
+          const data = JSON.parse(dataStr)
+          
+          if (data.topic) generatedTopic.value = data.topic
+          if (data.content) displayContent.value = data.content
+          if (data.log) addLog(data.log)
+        }
+      }
+    }
+  } catch (e) {
+    ElMessage.error('生成中断: ' + e)
+    isRunning.value = false
+  }
+}
+
+const resetAll = () => {
+  activeStep.value = 0
+  form.value.content = ''
+  form.value.instruction = '风格专业，逻辑清晰'
+  generatedTopic.value = ''
+  displayContent.value = ''
+  projectId.value = ''
+  selectedAngle.value = null
+  angleOptions.value = []
+  runLogs.value = []
+}
+
+const showDebugLogs = async () => {
+  if (!projectId.value) return
+  try {
+    const res: any = await (await fetch(`${apiClient.defaults.baseURL}/api/write/v3/logs/${projectId.value}`)).json()
+    detailedLogs.value = res.logs
+    debugLogVisible.value = true
+  } catch (e) {
+    ElMessage.error('获取日志失败')
+  }
 }
 
 const fetchHistory = async () => {
   try {
-    const res: any = await getProjects()
-    historyList.value = (res.projects || []).filter((p: any) => p.source_type === 'newsroom_v3')
-  } catch (e) { console.error(e) }
+    const res = await fetch(`${apiClient.defaults.baseURL}/api/write/v3/projects`)
+    const data: any = await res.json()
+    historyList.value = data.projects || []
+  } catch (e) {
+    console.error(e)
+  }
 }
 
-const loadHistory = async (id: string) => {
+const loadProject = async (id: string) => {
   try {
-    const res: any = await getProjectDetail(id)
-    currentId.value = id
-    form.value.instruction = res.requirements || ''
-    form.value.content = res.source_data || ''
-    
-    // 优先读取 final_article 或 full_draft
-    const content = res.final_article || res.full_draft || ''
-    
-    if (content) {
-      displayContent.value = content
-      currentStep.value = '已归档'
-      activeTab.value = 'text'
-    } else {
-      displayContent.value = ''
-      ElMessage.info('暂无生成内容')
-    }
-    
-    generatedTopic.value = res.title || '未命名项目'
-    logs.value = []
+    const res = await fetch(`${apiClient.defaults.baseURL}/api/write/v3/project/${id}`)
+    const p: any = await res.json()
+    projectId.value = id
+    generatedTopic.value = p.title || '未命名'
+    displayContent.value = p.full_draft || ''
+    activeStep.value = 3
+    drawerVisible.value = false
   } catch (e) {
     ElMessage.error('加载失败')
   }
 }
 
-const startGeneration = async () => {
-  if (!form.value.content) return ElMessage.warning('请粘贴原始素材')
-  
-  isRunning.value = true
-  logs.value = []
-  displayContent.value = ''
-  generatedTopic.value = ''
-  currentStep.value = '启动中...'
-  activeTab.value = 'text'
-  addLog('系统启动...')
-  
-  try {
-    const response = await fetch(`${apiClient.defaults.baseURL}/api/write/v3/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
-    })
-    
-    const reader = response.body?.getReader()
-    const decoder = new TextDecoder()
-    let buffer = '' // 缓冲池
-    
-    while (true) {
-      const { done, value } = await reader!.read()
-      if (done) break
-      
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n') // SSE 分隔符
-      buffer = lines.pop() || '' // 保留未完成片段
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6)
-          if (dataStr === '[DONE]') {
-            isRunning.value = false
-            currentStep.value = '完成'
-            addLog('✅ 执行完毕')
-            fetchHistory()
-            continue
-          }
-          
-          try {
-            const data = JSON.parse(dataStr)
-            
-            if (data.error) {
-              addLog('❌ 错误: ' + data.error)
-              continue
-            }
-
-            if (data.logs) data.logs.forEach((l: string) => addLog(l))
-            
-            if (data.node) {
-              const nodeMap: Record<string, string> = {
-                'TopicGen': '拟定标题', 'Analyst': '分析素材', 'Architect': '设计大纲',
-                'Writer': '正在撰写', 'Reviewer': '主编审阅', 'Polisher': '最终润色',
-                'FastFinish': '极速归档'
-              }
-              currentStep.value = nodeMap[data.node] || data.node
-            }
-            
-            if (data.generated_topic) generatedTopic.value = data.generated_topic
-            if (data.display_content) displayContent.value = data.display_content
-            
-          } catch (e) { console.error('Parse error:', e) }
-        }
-      }
-    }
-  } catch (e) {
-    ElMessage.error('请求失败')
-    isRunning.value = false
-  }
-}
-
-const addLog = (text: string) => {
-  logs.value.push({ time: dayjs().format('HH:mm:ss'), text })
-  scrollToLogBottom()
-}
-
-const scrollToLogBottom = () => {
-  nextTick(() => {
-    if (logScrollRef.value) {
-      const wrap = logScrollRef.value.wrapRef
-      if(wrap) wrap.scrollTop = wrap.scrollHeight
-    }
-  })
-}
-
-const formatDateShort = (str: string) => dayjs(str).format('MM-DD HH:mm')
-
-onMounted(() => {
-  fetchHistory()
-})
+onMounted(fetchHistory)
 </script>
 
 <style scoped>
-/* 样式保持原样即可，重点是 template 和 script 的变化 */
-.v3-container { height: 100vh; background: #f5f7fa; overflow: hidden; }
-.history-aside { background: #fff; border-right: 1px solid #dcdfe6; display: flex; flex-direction: column; }
-.history-header { padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: #333; }
-.header-actions { display: flex; gap: 8px; }
-.history-item { padding: 12px 15px; cursor: pointer; border-bottom: 1px solid #f5f7fa; transition: background 0.2s; }
-.history-item:hover { background: #f5f7fa; }
-.history-item.active { background: #ecf5ff; border-right: 3px solid #409eff; }
-.history-empty { text-align: center; color: #999; padding: 20px; font-size: 13px; }
-.item-title { font-size: 14px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #333; }
-.item-date { font-size: 12px; color: #999; }
-.main-workspace { padding: 20px; background: #f5f7fa; }
-.panel { background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
-.col-input { display: flex; flex-direction: column; height: 100%; gap: 15px; }
-.input-panel { padding: 20px; flex-shrink: 0; }
-.log-panel { flex: 1; padding: 15px 20px; overflow: hidden; background: #2b2d30; color: #ccc; }
-.log-scroll { height: calc(100% - 40px); }
-.log-item { font-family: monospace; font-size: 12px; margin-bottom: 4px; }
-.log-time { color: #666; margin-right: 8px; }
-.log-text { color: #aaa; }
-.col-output { height: 100%; }
-.result-panel { height: 100%; padding: 0; overflow: hidden; }
-.result-header { padding: 15px 25px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-.header-left h3 { margin: 0; display: inline-block; margin-right: 15px; }
-.topic-tag { font-size: 14px; font-weight: bold; color: #409eff; background: #ecf5ff; padding: 4px 10px; border-radius: 4px; }
-.result-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-.content-wrapper, .custom-tabs { height: 100%; display: flex; flex-direction: column; }
-:deep(.el-tabs__content) { flex: 1; overflow: hidden; padding: 0; }
-:deep(.el-tabs__header) { margin: 0; padding: 0 20px; }
-.markdown-scroll-wrapper { height: 100%; overflow-y: auto; padding: 30px 40px; }
-.card-scroll-wrapper { height: 100%; overflow-y: auto; padding: 20px; background: #f0f2f5; }
-.empty-state { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #909399; }
-.run-btn { width: 100%; font-weight: bold; }
-.typing-indicator { margin-top: 20px; display: flex; gap: 5px; justify-content: center; }
-.typing-indicator span { width: 6px; height: 6px; background: #409eff; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-@keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+.v3-container { 
+  height: 100vh; 
+  background: #F2F3F5; 
+  display: flex; 
+  flex-direction: column; 
+  overflow: hidden;
+}
+
+.wizard-header { 
+  background: #fff; 
+  padding: 0 40px; 
+  height: 60px; 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  border-bottom: 1px solid #e0e0e0; 
+  flex-shrink: 0;
+}
+
+.brand { 
+  font-weight: 800; 
+  font-size: 18px; 
+  color: #333; 
+}
+
+.custom-steps { 
+  width: 600px; 
+  background: transparent !important; 
+  padding: 10px 0; 
+}
+
+.wizard-content { 
+  flex: 1; 
+  padding: 40px; 
+  display: flex; 
+  justify-content: center; 
+  overflow: auto;
+  align-items: flex-start;
+}
+
+.step-card { 
+  background: #fff; 
+  border-radius: 12px; 
+  padding: 40px; 
+  width: 800px; 
+  box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+  height: fit-content;
+}
+
+.full-width { 
+  width: 100%; 
+  padding: 0; 
+  background: transparent; 
+  box-shadow: none; 
+  display: flex; 
+  height: 100%;
+}
+
+.card-title { 
+  font-size: 24px; 
+  font-weight: bold; 
+  margin-bottom: 20px; 
+  color: #1D1D1F; 
+}
+
+.subtitle { 
+  color: #666; 
+  margin-bottom: 30px; 
+  font-size: 14px;
+}
+
+/* 角度选择卡片 */
+.angles-grid { 
+  display: grid; 
+  grid-template-columns: repeat(3, 1fr); 
+  gap: 20px; 
+  margin-bottom: 40px; 
+}
+
+.angle-box { 
+  border: 2px solid #eee; 
+  border-radius: 12px; 
+  padding: 25px; 
+  cursor: pointer; 
+  transition: all 0.2s; 
+  position: relative; 
+}
+
+.angle-box:hover { 
+  border-color: #409EFF; 
+  transform: translateY(-5px); 
+}
+
+.angle-box.selected { 
+  border-color: #409EFF; 
+  background: #ECF5FF; 
+}
+
+.angle-icon { 
+  font-size: 40px; 
+  font-weight: 900; 
+  color: #eee; 
+  margin-bottom: 10px; 
+}
+
+.angle-box.selected .angle-icon { 
+  color: #409EFF; 
+}
+
+.angle-box h3 {
+  margin: 10px 0;
+  font-size: 16px;
+}
+
+.angle-box p {
+  margin: 0;
+  font-size: 13px;
+  color: #666;
+}
+
+.check-mark { 
+  position: absolute; 
+  top: 10px; 
+  right: 10px; 
+  color: #409EFF; 
+  font-weight: bold; 
+}
+
+/* 结果布局 */
+.result-layout { 
+  display: flex; 
+  width: 100%; 
+  height: 100%; 
+  gap: 20px; 
+}
+
+.preview-panel { 
+  flex: 3; 
+  background: #fff; 
+  border-radius: 12px; 
+  display: flex; 
+  flex-direction: column; 
+  overflow: hidden; 
+}
+
+.preview-header { 
+  padding: 20px; 
+  border-bottom: 1px solid #eee; 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+}
+
+.preview-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.log-drawer { 
+  flex: 1; 
+  background: #2B2D30; 
+  border-radius: 12px; 
+  color: #fff; 
+  display: flex; 
+  flex-direction: column; 
+  overflow: hidden;
+}
+
+.drawer-header { 
+  padding: 15px; 
+  border-bottom: 1px solid #444; 
+  font-weight: bold; 
+  background: #232528; 
+  border-radius: 12px 12px 0 0; 
+  flex-shrink: 0;
+}
+
+.log-entry { 
+  padding: 8px 15px; 
+  font-family: monospace; 
+  font-size: 12px; 
+  border-bottom: 1px solid #383a3d; 
+  line-height: 1.4; 
+  flex-shrink: 0;
+}
+
+.log-time { 
+  color: #888; 
+  margin-right: 8px; 
+}
+
+.log-msg { 
+  color: #ccc; 
+}
+
+.article-container { 
+  padding: 40px; 
+  max-width: 900px; 
+  margin: 0 auto; 
+}
+
+.status-badge { 
+  background: #E6F7FF; 
+  color: #1890FF; 
+  padding: 5px 12px; 
+  border-radius: 20px; 
+  font-size: 12px; 
+  display: flex; 
+  align-items: center; 
+  gap: 6px; 
+}
+
+.dot { 
+  width: 8px; 
+  height: 8px; 
+  background: #1890FF; 
+  border-radius: 50%; 
+  animation: pulse 1.5s infinite; 
+}
+
+@keyframes pulse { 
+  0% { opacity: 1; } 
+  50% { opacity: 0.4; } 
+  100% { opacity: 1; } 
+}
+
+/* Fade Slide Transition */
+.fade-slide-enter-active, .fade-slide-leave-active { 
+  transition: all 0.3s ease; 
+}
+
+.fade-slide-enter-from { 
+  opacity: 0; 
+  transform: translateX(20px); 
+}
+
+.fade-slide-leave-to { 
+  opacity: 0; 
+  transform: translateX(-20px); 
+}
+
+.next-btn {
+  width: 100%;
+  font-weight: bold;
+  margin-top: 20px;
+}
+
+.step-actions {
+  margin-top: 30px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.drawer-footer {
+  padding: 15px;
+  border-top: 1px solid #444;
+  text-align: center;
+  flex-shrink: 0;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.markdown-body {
+  color: #333;
+  line-height: 1.8;
+  font-size: 16px;
+}
+
+.markdown-body h2 {
+  margin-top: 30px;
+  margin-bottom: 15px;
+  font-size: 20px;
+}
+
+.markdown-body p {
+  margin: 15px 0;
+}
+
+.loading-spinner {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+
+.is-loading {
+  font-size: 24px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.history-row {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.history-row:hover {
+  background: #f5f7fa;
+}
+
+.h-title {
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.h-date {
+  font-size: 12px;
+  color: #999;
+}
 </style>

@@ -110,7 +110,8 @@ def init_db():
                 outline_data TEXT,
                 full_draft TEXT,
                 assets_data TEXT,
-                logs TEXT
+                logs TEXT,
+                process_data TEXT
             )
             ''')
             
@@ -118,7 +119,8 @@ def init_db():
             columns_to_ensure = [
                 ("logs", "TEXT"),
                 ("status", "TEXT DEFAULT 'draft'"),
-                ("assets_data", "TEXT")
+                ("assets_data", "TEXT"),
+                ("process_data", "TEXT")
             ]
             
             for col_name, col_type in columns_to_ensure:
@@ -250,8 +252,9 @@ def update_session_qa_pairs(session_id: str, qa_pairs: List[str]):
 
 # === 核心 CRUD 修复 ===
 
-def create_writing_project(title: str, requirements: str, source_type: str, source_data: str) -> str:
-    project_id = str(uuid.uuid4())
+def create_writing_project(title: str, requirements: str, source_type: str, source_data: str, project_id: Optional[str] = None) -> str:
+    if project_id is None:
+        project_id = str(uuid.uuid4())
     logger.info(f"正在创建项目 ID: {project_id} | Title: {title}")
     
     with db_manager.get_connection() as conn:
@@ -294,11 +297,11 @@ def get_writing_project(project_id: str) -> dict:
         row = conn.execute("SELECT * FROM writing_projects WHERE id = ?", (project_id,)).fetchone()
         if row:
             res = dict(row)
-            for field in ['requirements', 'outline_data', 'assets_data', 'logs']:
+            for field in ['requirements', 'outline_data', 'assets_data', 'logs', 'process_data']:
                 if res.get(field):
                     try:
                         res[field] = json.loads(res[field])
-                    except: res[field] = []
+                    except: res[field] = [] if field == 'logs' else {}
             return res
     return None
 
@@ -396,3 +399,39 @@ def update_project_section_content(project_id: str, outline_data: List[Dict]):
         full_text = "\n\n".join([f"## {sec['title']}\n\n{sec.get('content','')}" for sec in outline_data])
         c.execute("UPDATE writing_projects SET outline_data = ?, full_draft = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
                   (json.dumps(outline_data, ensure_ascii=False), full_text, project_id))
+
+# [新增] 更新过程数据
+def update_project_process_data(project_id: str, data: dict):
+    with db_manager.get_connection() as conn:
+        # 先读取旧数据合并（简单的 JSON Merge）
+        row = conn.execute("SELECT process_data FROM writing_projects WHERE id = ?", (project_id,)).fetchone()
+        old_data = {}
+        if row and row[0]:
+            try:
+                old_data = json.loads(row[0])
+            except: pass
+        
+        # 合并
+        new_data = {**old_data, **data}
+        
+        conn.execute("UPDATE writing_projects SET process_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
+                  (json.dumps(new_data, ensure_ascii=False), project_id))
+        logger.info(f"✅ 过程数据已更新: {project_id}")
+
+# [新增] 追加日志到数据库
+def append_project_log(project_id: str, log_entry: dict):
+    """
+    log_entry 结构: {"step": "Writer", "input": "...", "output": "...", "timestamp": "..."}
+    """
+    with db_manager.get_connection() as conn:
+        row = conn.execute("SELECT logs FROM writing_projects WHERE id = ?", (project_id,)).fetchone()
+        logs = []
+        if row and row[0]:
+            try:
+                logs = json.loads(row[0])
+            except: pass
+        
+        logs.append(log_entry)
+        conn.execute("UPDATE writing_projects SET logs = ? WHERE id = ?", 
+                  (json.dumps(logs, ensure_ascii=False), project_id))
+        logger.info(f"📝 日志已记录: {project_id} - {log_entry.get('stage', 'unknown')}")

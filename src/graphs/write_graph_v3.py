@@ -1,16 +1,21 @@
 from langgraph.graph import StateGraph, END
 from src.state import DeepWriteState
 from src.nodes.write_nodes_v3 import (
-    topic_generator_node, # 新增
+    angle_proposer_node,     # [新增]
+    structure_gen_node,      # [新增] 合并了 TitleGen, Analyst, Architect
+    topic_generator_node,
     analyst_node,
     architect_node,
     writer_node,
     reviewer_node,
-    polisher_node
+    polisher_node,
+    check_continue,          # [新增]
+    fast_finish_node         # [新增]
 )
 
 # 路由条件函数
 def check_continue(state: DeepWriteState):
+    """路由条件：决定是否继续写作或进入评审"""
     idx = state["current_section_index"]
     outline = state["outline"]
     
@@ -23,25 +28,13 @@ def check_continue(state: DeepWriteState):
         else:
             return "Reviewer" # 写完了，去审阅
 
-# 极速模式下的快速收尾节点
-async def fast_finish_node(state: DeepWriteState) -> dict:
-    full_draft = "\n\n".join(state["section_drafts"])
-    # 保存到数据库
-    if state.get("project_id"):
-        from src.db import update_project_draft, update_project_outline
-        update_project_draft(state["project_id"], full_draft)
-        if state.get("outline"):
-            update_project_outline(state["project_id"], state["outline"])
-    return {
-        "final_article": full_draft,
-        "run_logs": ["⚡ [极速模式] 跳过审阅，直接归档"]
-    }
-
 def build_graph():
     wf = StateGraph(DeepWriteState)
     
-    # 注册节点
-    wf.add_node("TopicGen", topic_generator_node) # 新增
+    # 注册所有节点
+    wf.add_node("AngleProposer", angle_proposer_node)     # [新增] 第一步：选方向
+    wf.add_node("StructureGen", structure_gen_node)       # [新增] 第二步：生成标题和大纲（合并）
+    wf.add_node("TopicGen", topic_generator_node)         # [保留] 兼容旧流程
     wf.add_node("Analyst", analyst_node)
     wf.add_node("Architect", architect_node)
     wf.add_node("Writer", writer_node)
@@ -49,25 +42,35 @@ def build_graph():
     wf.add_node("Polisher", polisher_node)
     wf.add_node("FastFinish", fast_finish_node)
     
-    # 设置入口：从生成主题开始
-    wf.set_entry_point("TopicGen")
+    # === 新版流程 (使用 AngleProposer + StructureGen) ===
+    # 这里保持图的完整性，但实际由 API 路由层控制哪个节点开始运行
+    wf.set_entry_point("AngleProposer")  # 默认入口
     
-    # 连线
-    wf.add_edge("TopicGen", "Analyst") # TopicGen -> Analyst
+    # AngleProposer -> END (暂停点，等待用户选择)
+    wf.add_edge("AngleProposer", END)
+    
+    # 当前端提交选择后，应该直接调用 StructureGen
+    # 为了兼容，我们还是连接起来，但 API 层可以控制从哪里开始
+    wf.add_edge("StructureGen", "Writer")
+    
+    # === 旧版流程 (TopicGen -> Analyst -> Architect) ===
+    # 这是为了兼容旧版本，新版本会跳过这个
+    wf.add_edge("TopicGen", "Analyst")
     wf.add_edge("Analyst", "Architect")
     wf.add_edge("Architect", "Writer")
     
-    # 循环逻辑：Writer -> Check -> Writer/Reviewer/FastFinish
+    # === 写作循环 ===
     wf.add_conditional_edges(
         "Writer",
         check_continue,
         {
-            "Writer": "Writer",
-            "Reviewer": "Reviewer",
-            "FastFinish": "FastFinish"
+            "Writer": "Writer",      # 继续写下一章
+            "Reviewer": "Reviewer",  # 进入审阅
+            "FastFinish": "FastFinish" # 极速模式，直接完成
         }
     )
     
+    # === 审阅和润色流程 ===
     wf.add_edge("Reviewer", "Polisher")
     wf.add_edge("Polisher", END)
     wf.add_edge("FastFinish", END)
