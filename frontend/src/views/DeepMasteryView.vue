@@ -123,6 +123,13 @@
               <div v-if="currentConcept?.detail" class="chat-section">
                 <h4>💬 深度追问</h4>
                 <div class="chat-messages" ref="chatScroll">
+                  <!-- 新增：空状态提示 -->
+                  <div v-if="!currentConcept.chat_history?.length" class="chat-empty">
+                    <el-icon size="40" color="#c0c4cc"><ChatLineRound /></el-icon>
+                    <p>AI 导师已就位，基于当前概念有什么想深入了解的？请随时提问 👇</p>
+                  </div>
+                  
+                  <!-- 原有聊天消息遍历 -->
                   <div v-for="(msg, idx) in currentConcept.chat_history" :key="idx" class="message" :class="msg.role">
                     <div class="message-bubble markdown-body" v-html="renderMarkdown(msg.content)"></div>
                   </div>
@@ -173,7 +180,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Plus, Notebook, SuccessFilled, CircleCheck, Delete } from '@element-plus/icons-vue'
+import { Plus, Notebook, SuccessFilled, CircleCheck, Delete, ChatLineRound } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
@@ -617,12 +624,29 @@ onMounted(() => {
 }
 
 .chat-messages {
-  height: 300px;
+  /* 删掉 height: 300px; 改为最小/最大高度限制 */
+  min-height: 120px;
+  max-height: 400px;
   overflow-y: auto;
   padding: 15px;
   background: #f9f9f9;
   border-radius: 4px;
   margin-bottom: 20px;
+}
+
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 0;
+  color: #909399;
+  text-align: center;
+}
+
+.chat-empty p {
+  margin-top: 10px;
+  font-size: 13px;
 }
 
 .message {

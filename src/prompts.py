@@ -364,31 +364,32 @@ def get_mastery_extractor_prompt(topic: str, search_context: str = "") -> str:
     ]
     """
 
-def get_mastery_expander_prompt(topic: str, concept: str, all_concepts_str: str) -> str:
+def get_mastery_expander_prompt(topic: str, concept: str, all_concepts_str: str, search_context: str = "") -> str:
     return f"""
-    我们正在深度解析主题【{{topic}}】的核心节点：【{{concept}}】。
+    我们正在深度解析特定主题【{topic}】的核心节点：【{concept}】。
     其他核心节点有：{all_concepts_str}。
 
+    【最新联网检索资料】(高度重要，请务必提取其中的干货信息)
+    {search_context}
+
     【任务】
-    请扮演一位擅长"费曼技巧"的通俗科普作家。请生成关于【{{concept}}】的深度解析数据。
+    请扮演一位擅长"费曼技巧"的资深技术/业务专家。
+    请务必结合【联网检索资料】，生成关于【{concept}】在【{topic}】这一具体场景下的深度解析数据。
+    如果这是个专业框架/项目，请解释它具体是怎么实现的，绝对不要生成泛泛而谈的科普废话！
 
     请严格输出 JSON 格式（不要 Markdown 代码块）：
     {{
-        "one_sentence_def": "用最直白的大白话定义它（不要掉书袋）",
-        "analogy": "一个生活中的神类比（例如：把HTTP比作寄信）",
-        "core_logic": "它的底层运作逻辑（The 20%）",
+        "one_sentence_def": "用最直白的大白话定义它在 {topic} 中的实际作用",
+        "analogy": "一个生活中的神类比（通俗易懂）",
+        "core_logic": "它的底层运作逻辑（详细说明它是怎么在 {topic} 中工作的，涉及什么技术/机制）",
         "relationships": [
-            "与 XX 的关系：......",
             "与 XX 的关系：......"
         ],
         "derivations": [
-            "正因为有它，所以衍生出了 XX 特性...",
-            "由于它的限制，导致了 XX 问题..."
+            "正因为有它，所以衍生出了 XX 特性..."
         ],
-        "suggested_questions": [
-            "生成3个用户最可能感兴趣的追问（简短、犀利）",
-            "问题2...",
-            "问题3..."
+        "suggested_questions":[
+            "生成3个用户最可能感兴趣的深层追问（简短、犀利）"
         ]
     }}
     """
