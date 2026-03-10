@@ -106,13 +106,15 @@
                       <div class="tab-text markdown-body" v-html="renderMarkdown(currentConcept.detail.core_logic)"></div>
                     </el-tab-pane>
                     <el-tab-pane label="🤝 拓扑关系" name="relations">
-                      <ul>
-                        <li v-for="rel in currentConcept.detail.relationships" :key="rel">{{ rel }}</li>
+                      <ul class="relation-list">
+                        <!-- 行内Markdown渲染 -->
+                        <li v-for="rel in currentConcept.detail.relationships" :key="rel" v-html="renderMarkdownInline(rel)"></li>
                       </ul>
                     </el-tab-pane>
                     <el-tab-pane label="🌳 衍生特性" name="derivations">
-                      <ul>
-                        <li v-for="der in currentConcept.detail.derivations" :key="der">{{ der }}</li>
+                      <ul class="relation-list">
+                        <!-- 行内Markdown渲染 -->
+                        <li v-for="der in currentConcept.detail.derivations" :key="der" v-html="renderMarkdownInline(der)"></li>
                       </ul>
                     </el-tab-pane>
                   </el-tabs>
@@ -196,6 +198,12 @@ marked.setOptions({
 
 const renderMarkdown = (text: string) => {
   return (marked as any)(text)
+}
+
+// === 新增：行内 Markdown 渲染（用于列表，避免产生多余的 <p> 标签） ===
+const renderMarkdownInline = (text: string) => {
+  if (!text) return ''
+  return (marked as any).parseInline(text)
 }
 
 interface ConceptDetail {
@@ -691,5 +699,38 @@ onMounted(() => {
 
 .chat-input {
   margin-top: 10px;
+}
+
+/* === 新增：拓扑关系与衍生特性列表的排版优化 === */
+.relation-list {
+  padding-left: 20px;
+  line-height: 1.8;
+  font-size: 15px;
+  color: #333;
+}
+.relation-list li {
+  margin-bottom: 12px;
+}
+.relation-list li strong {
+  color: #1890ff; /* 将加粗字体稍微变蓝，视觉层次更清晰 */
+}
+
+/* === 新增：修复聊天气泡内部的 Markdown 颜色冲突 === */
+/* 防止 User 的蓝色气泡里，Markdown 默认的黑色字体导致看不清 */
+.message.user .message-bubble.markdown-body {
+  color: #ffffff !important;
+}
+.message.user .message-bubble.markdown-body p,
+.message.user .message-bubble.markdown-body strong,
+.message.user .message-bubble.markdown-body a {
+  color: #ffffff !important;
+}
+/* 调整 Assistant 气泡的内边距，让 MD 显示更贴合 */
+.message.assistant .message-bubble.markdown-body {
+  background-color: transparent !important;
+  font-size: 14px;
+}
+.message.assistant .message-bubble.markdown-body p:last-child {
+  margin-bottom: 0;
 }
 </style>
