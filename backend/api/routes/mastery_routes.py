@@ -112,10 +112,14 @@ async def mastery_chat(
     
     try:
         res = chat_node(state)
-        ai_msg = res["chat_history"][-1]
+        # res["chat_history"] 里只有 LLM 这次的新回答
+        ai_msg = res["chat_history"][-1] 
         
-        # 更新并保存
-        concept["chat_history"] = [serialize_message(m) for m in res["chat_history"]]
+        # 【核心修复】将 AI 的回复追加到完整历史列表中
+        history.append(ai_msg)
+        
+        # 把完整的 history 序列化并存入 concept
+        concept["chat_history"] = [serialize_message(m) for m in history]
         update_mastery_session_data(session_id, concepts)
         
         return {"reply": ai_msg.content, "history": concept["chat_history"]}
