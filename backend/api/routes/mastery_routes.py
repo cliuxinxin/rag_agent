@@ -35,6 +35,79 @@ async def create_session(topic: str = Body(..., embed=True)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from pydantic import BaseModel
+from src.db import delete_mastery_session
+
+class AddConceptReq(BaseModel):
+    session_id: str
+    concept_name: str
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    """【修复1】：删除学习记录"""
+    try:
+        delete_mastery_session(session_id)
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/add_concept")
+async def add_custom_concept(req: AddConceptReq):
+    """【修复3】：手动添加核心概念"""
+    session = get_mastery_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    
+    concepts = session["concepts_data"]
+    # 防止重复
+    if not any(c["name"] == req.concept_name for c in concepts):
+        concepts.append({
+            "name": req.concept_name,
+            "axiom": "自定义添加的概念",
+            "reason": "用户手动指定"
+        })
+        update_mastery_session_data(req.session_id, concepts)
+    return {"status": "success", "concepts_data": concepts}
+
+@router.post("/generate_more")
+async def generate_more_concepts(session_id: str = Body(..., embed=True)):
+    """【修复4】：联网生成更多概念"""
+    session = get_mastery_session(session_id)
+    if not session: raise HTTPException(404, "Not found")
+    
+    topic = session["topic"]
+    existing_names = [c["name"] for c in session["concepts_data"]]
+    
+    # 强制搜索寻找新概念
+    from src.tools.search import tavily_search
+    from src.nodes.common import get_llm
+    from langchain_core.messages import HumanMessage
+    import json, re
+    
+    search_res = tavily_search(f"What are the advanced/niche core concepts of {topic}?", max_results=2)
+    prompt = f"""
+    主题：【{topic}】
+    已经存在的概念：{existing_names}
+    检索资料：{search_res}
+    
+    请根据资料，为该主题补充 2 个更深入、尚未提及的核心概念。
+    严格返回 JSON List 格式:[{{"name": "...", "axiom": "...", "reason": "..."}}]
+    """
+    
+    llm = get_llm()
+    response = llm.invoke([HumanMessage(content=prompt)]).content
+    
+    try:
+        clean = response.replace("```json", "").replace("```", "").strip()
+        new_concepts = json.loads(clean)
+        if isinstance(new_concepts, list):
+            session["concepts_data"].extend(new_concepts)
+            update_mastery_session_data(session_id, session["concepts_data"])
+    except:
+        pass
+        
+    return {"status": "success", "concepts_data": session["concepts_data"]}
+
 @router.get("/sessions")
 async def list_sessions():
     """获取所有学习记录"""

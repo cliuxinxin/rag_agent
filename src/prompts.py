@@ -341,22 +341,22 @@ def get_ppt_writer_prompt(content: str, outline_str: str) -> str:
 
 # === Deep Mastery (20/80 Learning) ===
 
-def get_mastery_extractor_prompt(topic: str) -> str:
+def get_mastery_extractor_prompt(topic: str, search_context: str = "") -> str:
     return f"""
-    你是一个严谨的学术导师。用户想要学习主题：【{{topic}}】。
-
-    请执行"降维打击"，拆解出该主题最本质的"关键 20%"。
+    你是一个严谨的学术导师。用户想要学习主题：【{topic}】。
     
-    【重要指令】
-    1. **锁定领域**：你提取的概念必须是【{{topic}}】领域的专业术语。
-       - 如果用户问"{topic}"，严禁出现"导数"或"损失函数"等其他领域概念。
-       - 如果用户问"微积分"，严禁出现"区块链"。
-    2. **核心验证**：如果删掉这个概念，{topic} 就不复存在。
+    【联网检索资料】(如为空则依靠你的固有知识)
+    {search_context}
 
-    请输出 JSON 格式：
-    [
+    请执行"降维打击"，结合检索资料，拆解出该主题最本质的 3-5 个"关键 20%"核心概念。
+    
+    【⚠️ 致命警告】
+    严禁原样照抄提示词中的 "核心概念名称"、"底层公理定义" 等占位符！必须输出真实存在的专业术语。
+    如果不了解该领域且无搜索资料，请如实输出 "未收录该概念"。
+
+    请严格输出 JSON 格式（List of Dicts）：[
         {{
-            "name": "核心概念名称", 
+            "name": "真实的核心专业术语1", 
             "axiom": "底层公理定义",
             "reason": "为什么它是20%？"
         }},

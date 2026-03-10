@@ -59,7 +59,13 @@
         <div class="dashboard-content">
           <!-- 概念列表 -->
           <div class="concept-nav">
-            <div class="nav-title">核心节点</div>
+            <div class="nav-title" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>核心节点</span>
+              <div>
+                <el-button link type="primary" size="small" @click="showAddDialog = true">➕ 添加</el-button>
+                <el-button link type="success" size="small" @click="generateMore" :loading="isGeneratingMore">🌐 扩展</el-button>
+              </div>
+            </div>
             <div 
               v-for="concept in currentSession.concepts_data" 
               :key="concept.name"
@@ -154,6 +160,14 @@
         </div>
       </div>
     </main>
+    <!-- 手动添加概念弹窗 -->
+    <el-dialog v-model="showAddDialog" title="手动添加核心节点" width="400px">
+      <el-input v-model="customConceptName" placeholder="输入你想补充的专业术语/节点名称..." @keyup.enter="addCustomConcept" />
+      <template #footer>
+        <el-button @click="showAddDialog = false">取消</el-button>
+        <el-button type="primary" @click="addCustomConcept">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -213,6 +227,9 @@ const isExpanding = ref(false)
 const chatInput = ref('')
 const isChatting = ref(false)
 const chatScroll = ref<HTMLElement | null>(null)
+const showAddDialog = ref(false)
+const customConceptName = ref('')
+const isGeneratingMore = ref(false)
 
 const currentConcept = computed(() => {
   if (!currentSession.value || !selectedConceptName.value) return null
@@ -336,6 +353,40 @@ const scrollToBottom = () => {
       chatScroll.value.scrollTop = chatScroll.value.scrollHeight
     }
   })
+}
+
+// 添加手动节点方法
+const addCustomConcept = async () => {
+  if (!customConceptName.value.trim() || !currentSession.value) return
+  try {
+    const resp: any = await apiClient.post('/api/mastery/add_concept', {
+      session_id: currentSession.value.id,
+      concept_name: customConceptName.value
+    })
+    currentSession.value.concepts_data = resp.concepts_data
+    showAddDialog.value = false
+    customConceptName.value = ''
+    ElMessage.success('添加成功')
+  } catch (e) {
+    ElMessage.error('添加失败')
+  }
+}
+
+// 联网扩展更多节点方法
+const generateMore = async () => {
+  if (!currentSession.value) return
+  isGeneratingMore.value = true
+  try {
+    const resp: any = await apiClient.post('/api/mastery/generate_more', {
+      session_id: currentSession.value.id
+    })
+    currentSession.value.concepts_data = resp.concepts_data
+    ElMessage.success('已通过联网为您扩展了新的节点！')
+  } catch (e) {
+    ElMessage.error('扩展失败')
+  } finally {
+    isGeneratingMore.value = false
+  }
 }
 
 onMounted(() => {

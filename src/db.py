@@ -435,3 +435,8 @@ def append_project_log(project_id: str, log_entry: dict):
         conn.execute("UPDATE writing_projects SET logs = ? WHERE id = ?", 
                   (json.dumps(logs, ensure_ascii=False), project_id))
         logger.info(f"📝 日志已记录: {project_id} - {log_entry.get('stage', 'unknown')}")
+
+def delete_mastery_session(session_id: str):
+    """删除学习记录"""
+    with db_manager.get_connection() as conn:
+        conn.execute("DELETE FROM mastery_sessions WHERE id = ?", (session_id,))
