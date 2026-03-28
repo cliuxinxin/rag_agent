@@ -15,6 +15,7 @@
     "axios": "^1.6.5",
     "dayjs": "^1.11.19",
     "dom-to-image-more": "^3.7.2",
+    "echarts": "^6.0.0",
     "element-plus": "^2.5.4",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.9.0",

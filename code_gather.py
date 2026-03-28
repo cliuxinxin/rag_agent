@@ -5,74 +5,91 @@ import sys
 def save_all_code(base_dir, include_deploy=True):
     """
     保存所有代码和部署配置到 txt 文件
-    
-    Args:
-        base_dir: 基础目录
-        include_deploy: 是否包含部署相关文件 (Dockerfile, docker-compose.yml, deploy.yml 等)
     """
-    output_path = os.path.join(base_dir, "project_source_code.txt") # 改名：不只是python了
+    output_path = os.path.join(base_dir, "project_source_code.txt")
     
     deploy_files = {"Dockerfile", "docker-compose.yml", "deploy.yml"}
-    config_extensions = {".yaml", ".yml", ".json", ".toml"}
-    
-    # 前端代码扩展名
+    config_extensions = {".yaml", ".yml", ".json", ".toml", ".ini"}
     frontend_extensions = {".vue", ".ts", ".tsx", ".js", ".jsx"}
     
-    # ❌ 必须跳过的黑名单目录（新增了 dist, build, .vscode 等）
+    # ❌ 扩充黑名单目录：包含所有常见的编译产物、缓存、依赖包
     skip_dirs = {
-        "__pycache__", ".git", ".langgraph_api", "logs", "storage", 
-        ".qoder", "node_modules", "venv", "env", "dist", "build", ".vscode", ".idea"
+        # Python 相关
+        "__pycache__", "venv", "env", ".pytest_cache", ".ruff_cache", ".mypy_cache", "htmlcov",
+        # 前端相关
+        "node_modules", "dist", "build", "out", ".next", ".nuxt", ".svelte-kit", "coverage", ".output",
+        # 工具和系统相关
+        ".git", ".vscode", ".idea", ".husky", "logs", "storage", ".qoder", ".langgraph_api", "tmp", "temp"
     }
     
-    # ❌ 必须跳过的黑名单文件（排除 lock 文件和旧的收集产物）
+    # ❌ 扩充黑名单文件：排除 Lock 文件和系统隐藏文件
     exclude_files = {
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", 
-        "project_source_code.txt", "all_python_files.txt"
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
+        "project_source_code.txt", "all_python_files.txt", 
+        ".DS_Store", "Thumbs.db"
+    }
+    
+    # ❌ 黑名单后缀名：排除编译后的产物和类型文件
+    exclude_extensions = {
+        ".map", ".pyc", ".pyo", ".pyd", ".so", ".dll", ".class", ".exe"
     }
     
     with open(output_path, "w", encoding="utf-8") as out:
         for root, dirs, files in os.walk(base_dir):
-            # 过滤掉黑名单目录
+            # 1. 第一道防线：告诉 os.walk 不要进入黑名单目录
             dirs[:] = [d for d in dirs if d not in skip_dirs]
 
             for fname in files:
-                if fname in exclude_files:
+                # 2. 第二道防线：过滤黑名单文件和黑名单后缀
+                if fname in exclude_files or any(fname.endswith(ext) for ext in exclude_extensions):
                     continue
                     
                 full_path = os.path.join(root, fname)
+                rel_path = os.path.relpath(full_path, base_dir)
+                rel_path_unix = rel_path.replace("\\", "/") # 统一转为 Unix 风格路径，方便判断
+                
+                # 3. 第三道防线（双重保险）：强制检查路径的所有级目录
+                # 防止由于某些奇葩嵌套（如 a/b/dist/src/x.js）导致前面漏判
+                path_parts = set(rel_path_unix.split("/"))
+                if path_parts.intersection(skip_dirs):
+                    continue
+                
                 should_include = False
                 
-                # 1. Python 文件
+                # 规则 1. Python 文件
                 if fname.endswith(".py"):
                     should_include = True
                 
-                # 2. 前端源文件 (限定在 frontend/src 目录下，彻底避开外层干扰)
-                elif any(fname.endswith(ext) for ext in frontend_extensions) and ("frontend/src" in full_path.replace("\\", "/")):
-                    if not fname.endswith(".min.js"): # 排除压缩文件
-                        should_include = True
+                # 规则 2. 前端源文件
+                elif any(fname.endswith(ext) for ext in frontend_extensions):
+                    # 必须在 src 目录下，且排除 .min.js 压缩文件和 .d.ts 自动生成的类型文件
+                    if ("frontend/src" in rel_path_unix or "src/" in rel_path_unix):
+                        if not (fname.endswith(".min.js") or fname.endswith(".d.ts")):
+                            should_include = True
                 
-                # 3. 部署相关文件
+                # 规则 3. 部署相关文件
                 elif include_deploy and fname in deploy_files:
                     should_include = True
-                elif include_deploy and "deploy.yml" in fname and ".github/workflows" in root:
+                elif include_deploy and "deploy.yml" in fname and ".github/workflows" in rel_path_unix:
                     should_include = True
                 
-                # 4. 其他核心配置文件
+                # 规则 4. 其他核心配置文件 (添加了前端常见配置)
                 elif include_deploy and any(fname.endswith(ext) for ext in config_extensions):
-                    important_configs = {"config.yaml", "requirements.txt", ".env.example", "package.json", "vite.config.ts"}
+                    important_configs = {
+                        "config.yaml", "requirements.txt", ".env.example", 
+                        "package.json", "vite.config.ts", "tsconfig.json", 
+                        "tailwind.config.js", "tailwind.config.ts", "postcss.config.js"
+                    }
                     if fname in important_configs:
                         should_include = True
                 
                 if should_include:
-                    # 获取相对路径
-                    rel_path = os.path.relpath(full_path, base_dir)
-                    
-                    # 保护机制：如果文件大于 500KB，大概率是数据文件或编译产物，跳过
+                    # 保护机制：如果文件大于 500KB，大概率是数据文件、图片或混淆后的 JS，跳过
                     if os.path.getsize(full_path) > 500 * 1024:
-                        print(f"⚠️ 跳过超大文件: {rel_path}")
+                        print(f"⚠️ 跳过超大文件: {rel_path_unix}")
                         continue
                         
-                    out.write(f"📁 {rel_path}\n")
+                    out.write(f"📁 {rel_path_unix}\n")
                     out.write("=" * 80 + "\n")
 
                     try:

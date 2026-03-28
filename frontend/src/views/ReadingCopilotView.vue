@@ -16,24 +16,28 @@
           <el-button @click="currentTheme = 'paper'" :type="currentTheme === 'paper' ? 'primary' : ''">📜 羊皮纸</el-button>
           <el-button @click="currentTheme = 'dark'" :type="currentTheme === 'dark' ? 'primary' : ''">🌙 夜间</el-button>
         </el-button-group>
+        
       </div>
     </div>
 
     <!-- 主内容区 -->
     <div class="main-content" v-if="currentSessionId">
-      <!-- 左栏：大纲导航 -->
+      <!-- 左栏：大纲导航 + 知识图谱 -->
       <div class="sidebar-left">
-        <h3>📑 文章大纲</h3>
-        <div class="toc-list">
-          <div 
-            v-for="(heading, index) in tableOfContents" 
-            :key="index"
-            class="toc-item"
-            @click="scrollToHeading(heading.id)"
-          >
-            {{ heading.text }}
-          </div>
-        </div>
+        <el-tabs v-model="leftSidebarTab" type="border-card">
+          <el-tab-pane label="📑 文章大纲" name="toc">
+            <div class="toc-list">
+              <div 
+                v-for="(heading, index) in tableOfContents" 
+                :key="index"
+                class="toc-item"
+                @click="scrollToHeading(heading.id)"
+              >
+                {{ heading.text }}
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
 
       <!-- 中栏：阅读区 -->
@@ -43,6 +47,7 @@
         @mouseup="handleTextSelection"
         @click="hideSelectionMenu"
         :style="{ fontSize: `${fontSize}px`, lineHeight: lineHeight }"
+        :class="readingAreaClasses"
       >
         <div v-html="renderedMarkdown" class="markdown-content"></div>
       </div>
@@ -67,6 +72,7 @@
                 <span>📄 字数: {{ sessionData?.word_count || 0 }} 字</span>
                 <span>⏱️ 阅读时间: {{ sessionData?.read_time || 0 }} 分钟</span>
               </div>
+              
             </div>
           </el-tab-pane>
           
@@ -111,6 +117,7 @@
               </div>
             </div>
           </el-tab-pane>
+          
         </el-tabs>
       </div>
     </div>
@@ -131,6 +138,8 @@
       <el-button @click="executeAction('explain')" size="small">🔍 解释</el-button>
       <el-button @click="executeAction('translate')" size="small">🌐 翻译</el-button>
       <el-button @click="executeAction('summarize')" size="small">📝 总结</el-button>
+      <el-button @click="executeAction('explain_5yr')" size="small">👶 5岁秒懂</el-button>
+      <el-button @click="executeAction('extract_quote')" size="small">🔥 提炼金句</el-button>
       <el-button @click="quoteSelection" size="small">💬 发问</el-button>
     </div>
 
@@ -169,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, nextTick } from 'vue'
+import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { Plus, List, Minus, Close } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
@@ -197,12 +206,16 @@ const pendingQuote = ref('')
 const showSelectionMenu = ref(false)
 const menuPosition = ref({ x: 0, y: 0 })
 const selectedText = ref('')
+const leftSidebarTab = ref('toc')
 
 const readingAreaRef = ref<HTMLElement>()
 const chatMessagesRef = ref<HTMLElement>()
 
 // 计算属性
 const themeClass = computed(() => `theme-${currentTheme.value}`)
+const readingAreaClasses = computed(() => {
+  return ''
+})
 
 // 方法
 async function initCopilot() {
@@ -244,8 +257,8 @@ async function loadSession(sessionId: string) {
       renderedMarkdown.value = marked(sessionData.value.markdown_content)
       generateTableOfContents(sessionData.value.markdown_content)
       
+      
       activeTab.value = 'guide'
-      await nextTick()
       scrollToBottom()
     }
   } catch (e: any) {
@@ -389,7 +402,9 @@ function getActionLabel(action: string): string {
   const labels: Record<string, string> = {
     'explain': '请解释这段内容',
     'translate': '请翻译这段内容',
-    'summarize': '请总结这段内容'
+    'summarize': '请总结这段内容',
+    'explain_5yr': '请用5岁小孩能懂的方式解释这段内容',
+    'extract_quote': '请把这段内容提炼成金句'
   }
   return labels[action] || action
 }
@@ -499,6 +514,7 @@ async function loadSessions() {
   }
 }
 
+
 function formatTime(timeStr: string): string {
   const date = new Date(timeStr)
   return date.toLocaleString('zh-CN', {
@@ -508,6 +524,7 @@ function formatTime(timeStr: string): string {
     minute: '2-digit'
   })
 }
+
 
 // 生命周期
 onMounted(() => {
@@ -604,6 +621,25 @@ onMounted(() => {
   background-color: rgba(64, 158, 255, 0.1);
 }
 
+.sidebar-left :deep(.el-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-left :deep(.el-tabs__content) {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+
+.sidebar-left :deep(.el-tab-pane) {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+
 /* 中栏阅读区 */
 .reading-area {
   width: 50%;
@@ -634,6 +670,7 @@ onMounted(() => {
   color: var(--el-color-primary);
   font-weight: 600;
 }
+
 
 /* 右栏 */
 .sidebar-right {
@@ -697,6 +734,7 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 13px;
 }
+
 
 /* 聊天区域 */
 .chat-container {
@@ -861,4 +899,5 @@ onMounted(() => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
+
 </style>

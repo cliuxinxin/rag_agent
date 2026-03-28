@@ -28,9 +28,12 @@ def text_formatter_node(state: CopilotState) -> CopilotState:
     要求：
     1. 修复断行和不合理的换行，将零散的句子合并成连贯的段落
     2. 每隔约800字根据语义插入 ## 二级标题，标题要能概括该部分内容
-    3. 将段落中的核心实体、人名、专业术语、重要概念用 **加粗** 标出
-    4. 保持原文内容100%不丢失，不修改原意，不添加额外内容
-    5. 不需要添加一级标题，直接从二级标题开始
+    3. 保持原文内容100%不丢失，不修改原意，不添加额外内容
+    4. 不需要添加一级标题，直接从二级标题开始
+    5. 对文本中的特殊内容使用特定HTML标签包裹（不要使用Markdown加粗）：
+       - 遇到重要的数据、金额、百分比：使用 `<mark class="lens-data">内容</mark>`
+       - 遇到核心人名、机构名、专有名词、重要概念：使用 `<mark class="lens-entity">内容</mark>`
+       - 遇到逻辑转折词（但是、然而、不过、因此、所以、综上所述、核心结论是等）：使用 `<mark class="lens-logic">内容</mark>`
     
     原始文本：
     {raw_text}
@@ -44,13 +47,19 @@ def text_formatter_node(state: CopilotState) -> CopilotState:
     }
 
 def summarizer_node(state: CopilotState) -> CopilotState:
-    """导读员节点：提取全文总结和核心看点"""
+    """导读员节点：提取全文总结、核心看点和双人播客剧本"""
     formatted_md = state["formatted_markdown"]
     
     prompt = f"""
     请阅读下面的文章，提取：
     1. 一句话总结：用简洁的语言概括全文核心内容
     2. 核心看点：3-5个最有价值的要点，每个要点一句话
+    3. 双人播客剧本：共5-6个对话回合，角色设定：
+       - 主播A：负责抛出痛点和提问，语气好奇活泼
+       - 嘉宾B：负责用原文干货解答，语气专业且幽默
+    4. 知识图谱：提取文章中的核心概念及其关系，构建知识图谱：
+       - nodes数组：每个节点包含id（数字）、name（概念名称）、category（概念类型，如"核心概念"、"人物"、"机构"、"事件"、"数据"等）
+       - edges数组：每个边包含source（源节点id）、target（目标节点id）、label（关系描述）
     
     输出严格为JSON格式，不要有其他内容：
     {{
@@ -59,7 +68,20 @@ def summarizer_node(state: CopilotState) -> CopilotState:
             "核心看点1",
             "核心看点2",
             "核心看点3"
-        ]
+        ],
+        "podcast_script": [
+            {{"speaker": "A", "text": "欢迎来到本期播客！今天我们要聊的这篇文章非常有意思..."}},
+            {{"speaker": "B", "text": "没错，文章最让我震惊的数据是..."}}
+        ],
+        "knowledge_graph": {{
+            "nodes": [
+                {{"id": 1, "name": "人工智能", "category": "核心概念"}},
+                {{"id": 2, "name": "机器学习", "category": "核心概念"}}
+            ],
+            "edges": [
+                {{"source": 1, "target": 2, "label": "包含"}}
+            ]
+        }}
     }}
     
     文章内容：
@@ -69,10 +91,15 @@ def summarizer_node(state: CopilotState) -> CopilotState:
     response = llm_json_mode.invoke(prompt)
     try:
         summary_data = json.loads(response.content.strip())
+        # 确保knowledge_graph存在
+        if "knowledge_graph" not in summary_data:
+            summary_data["knowledge_graph"] = {"nodes": [], "edges": []}
     except:
         summary_data = {
             "summary": "文章总结生成失败",
-            "takeaways": ["核心看点生成失败"]
+            "takeaways": ["核心看点生成失败"],
+            "podcast_script": [],
+            "knowledge_graph": {"nodes": [], "edges": []}
         }
     
     return {
@@ -186,7 +213,10 @@ def responder_node(state: CopilotState) -> CopilotState:
         "explain": f"请详细解释下面这段文本的含义，把专业概念讲得通俗易懂：\n{context}",
         "translate": f"请将下面这段文本翻译成流畅的中文：\n{context}",
         "summarize": f"请总结下面这段文本的核心内容：\n{context}",
-        "question": f"请基于下面的上下文回答问题：\n上下文：{context}\n问题：{user_query}"
+        "question": f"请基于下面的上下文回答问题：\n上下文：{context}\n问题：{user_query}",
+        "explain_5yr": f"请用给5岁小孩讲故事的口吻，极其生动、通俗地解释下面这段文本：\n{context}",
+        "extract_quote": f"请将下面这段文本压缩成一句极具哲理、适合发朋友圈的金句（不超过30字）：\n{context}",
+        "feynman_quiz": f"我刚读完了这篇文章，请基于文章最核心的观点，向我抛出一个具有挑战性的问题，来测试我是否真的看懂了。只需要输出问题本身：\n{context}"
     }
     
     prompt = action_prompts.get(action, action_prompts["question"])
