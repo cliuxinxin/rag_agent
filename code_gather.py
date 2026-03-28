@@ -10,78 +10,82 @@ def save_all_code(base_dir, include_deploy=True):
         base_dir: 基础目录
         include_deploy: 是否包含部署相关文件 (Dockerfile, docker-compose.yml, deploy.yml 等)
     """
-    output_path = os.path.join(base_dir, "all_python_files.txt")
+    output_path = os.path.join(base_dir, "project_source_code.txt") # 改名：不只是python了
     
-    # 定义部署相关的文件扩展名和文件名
     deploy_files = {"Dockerfile", "docker-compose.yml", "deploy.yml"}
     config_extensions = {".yaml", ".yml", ".json", ".toml"}
-    md_files = {"README.md", "MIGRATION_PLAN.md", "QUICK_START.md", "MIGRATION_PROGRESS.md"}
-    # 前端代码扩展名（Vue / TS / JS）
+    
+    # 前端代码扩展名
     frontend_extensions = {".vue", ".ts", ".tsx", ".js", ".jsx"}
+    
+    # ❌ 必须跳过的黑名单目录（新增了 dist, build, .vscode 等）
+    skip_dirs = {
+        "__pycache__", ".git", ".langgraph_api", "logs", "storage", 
+        ".qoder", "node_modules", "venv", "env", "dist", "build", ".vscode", ".idea"
+    }
+    
+    # ❌ 必须跳过的黑名单文件（排除 lock 文件和旧的收集产物）
+    exclude_files = {
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", 
+        "project_source_code.txt", "all_python_files.txt"
+    }
     
     with open(output_path, "w", encoding="utf-8") as out:
         for root, dirs, files in os.walk(base_dir):
-            # 去掉 venv
-            if "venv" in dirs:
-                dirs.remove("venv")
-            
-            # 跳过一些不需要的目录
-            skip_dirs = {"__pycache__", ".git", ".langgraph_api", "logs", "storage", ".qoder", "node_modules"}
+            # 过滤掉黑名单目录
             dirs[:] = [d for d in dirs if d not in skip_dirs]
 
             for fname in files:
+                if fname in exclude_files:
+                    continue
+                    
                 full_path = os.path.join(root, fname)
                 should_include = False
                 
-                # Python 文件
+                # 1. Python 文件
                 if fname.endswith(".py"):
                     should_include = True
                 
-                # 前端代码（限定在 frontend 目录下）
-                elif any(fname.endswith(ext) for ext in frontend_extensions) and "frontend" in root:
-                    should_include = True
+                # 2. 前端源文件 (限定在 frontend/src 目录下，彻底避开外层干扰)
+                elif any(fname.endswith(ext) for ext in frontend_extensions) and ("frontend/src" in full_path.replace("\\", "/")):
+                    if not fname.endswith(".min.js"): # 排除压缩文件
+                        should_include = True
                 
-                # 部署相关文件
+                # 3. 部署相关文件
                 elif include_deploy and fname in deploy_files:
                     should_include = True
-                
-                # GitHub Actions 部署文件
                 elif include_deploy and "deploy.yml" in fname and ".github/workflows" in root:
                     should_include = True
                 
-                # Markdown 文档（新增）
-                elif fname in md_files:
-                    should_include = False
-                
-                # 其他配置文件（可选）
+                # 4. 其他核心配置文件
                 elif include_deploy and any(fname.endswith(ext) for ext in config_extensions):
-                    # 只收集重要的配置文件
-                    important_configs = {"config.yaml", "requirements.txt", ".env.example"}
+                    important_configs = {"config.yaml", "requirements.txt", ".env.example", "package.json", "vite.config.ts"}
                     if fname in important_configs:
                         should_include = True
                 
                 if should_include:
+                    # 获取相对路径
                     rel_path = os.path.relpath(full_path, base_dir)
+                    
+                    # 保护机制：如果文件大于 500KB，大概率是数据文件或编译产物，跳过
+                    if os.path.getsize(full_path) > 500 * 1024:
+                        print(f"⚠️ 跳过超大文件: {rel_path}")
+                        continue
+                        
                     out.write(f"📁 {rel_path}\n")
                     out.write("=" * 80 + "\n")
 
                     try:
                         with open(full_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            out.write(content)
+                            out.write(f.read())
                     except UnicodeDecodeError:
-                        try:
-                            with open(full_path, "r", encoding="latin-1") as f:
-                                content = f.read()
-                                out.write(content)
-                        except Exception as e:
-                            out.write(f"无法读取文件：{e}\n")
+                        out.write("【此文件包含无法解析的非文本内容，已跳过】\n")
                     except Exception as e:
-                        out.write(f"读取错误：{e}\n")
+                        out.write(f"【读取错误：{e}】\n")
 
                     out.write("\n\n" + "=" * 80 + "\n\n")
 
-    print(f"✅ Very good, sir. 已生成：{output_path}")
+    print(f"✅ 代码收集完成，已生成：{output_path}")
     return output_path
 
 

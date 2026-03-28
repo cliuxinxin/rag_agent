@@ -228,3 +228,5 @@ skills/chart_maker/scripts/chart_20260118_193736.png
 frontend/.vite/deps_temp_20d3b4aa/package.json
 .vscode/settings.json
 .DS_Store
+
+frontend/dist/
