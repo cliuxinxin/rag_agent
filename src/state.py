@@ -215,3 +215,27 @@ class MasteryState(TypedDict):
     
     # 控制
     next: str
+
+# === 长文伴读 Copilot State ===
+class CopilotState(TypedDict):
+    # 输入
+    raw_text: str                  # 用户输入的原始长文本
+    session_id: str                # 会话ID
+    user_query: str                # 用户提问
+    selected_text: str             # 用户划选的文本
+    action: str                    # 操作类型: explain/translate/summarize/question
+    
+    # 初始化阶段输出
+    formatted_markdown: str        # 排版后的Markdown文本
+    summary_data: Dict[str, Any]   # 摘要数据: {"summary": "...", "takeaways": []}
+    word_count: int                # 总字数
+    read_time: int                 # 预估阅读时间(分钟)
+    vector_store: Any              # FAISS向量存储
+    
+    # 对话阶段输出
+    context: str                   # 检索到的上下文
+    response: str                  # AI回答
+    messages: Annotated[List[BaseMessage], add_messages] # 对话历史
+    
+    # 控制
+    next: str

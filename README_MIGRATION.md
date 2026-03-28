@@ -124,7 +124,7 @@ python start_server.py
 - **Vite** - 下一代构建工具
 - **TypeScript** - 类型安全的 JavaScript 超集
 - **Pinia** - Vue 官方状态管理
-- **Vue Router** - 官方路由管理器
+- **Vue Router** - 官方路由管理器·
 - **Element Plus** - 基于 Vue 3 的组件库
 - **Axios** - HTTP 客户端
 - **Marked** - Markdown 解析器

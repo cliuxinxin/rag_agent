@@ -16,7 +16,7 @@ project_root = os.path.join(os.path.dirname(__file__), '..')
 sys.path.insert(0, project_root)
 
 # 导入路由模块
-from api.routes import chat_routes, db_routes, read_routes, ppt_routes, kb_routes, write_routes, log_routes, mastery_routes, skill_routes, auth_routes, qa_routes, write_v3_routes
+from api.routes import chat_routes, db_routes, read_routes, ppt_routes, kb_routes, write_routes, log_routes, mastery_routes, skill_routes, auth_routes, qa_routes, write_v3_routes, copilot_routes
 # 数据库初始化
 from src.db import init_db
 from fastapi.staticfiles import StaticFiles
@@ -72,6 +72,7 @@ app.include_router(skill_routes.router, prefix="/api/skill", tags=["技能智能
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["用户认证"])
 app.include_router(qa_routes.router, prefix="/api/qa", tags=["深度追问"])
 app.include_router(write_v3_routes.router, prefix="/api/write/v3", tags=["DeepWrite V3"])
+app.include_router(copilot_routes.router, prefix="/api/copilot", tags=["长文伴读"])
 
 # 健康检查接口
 @app.get("/health", summary="健康检查")

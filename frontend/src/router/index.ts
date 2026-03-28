@@ -60,6 +60,12 @@ const routes = [
     name: 'DeepWriteV3',
     component: () => import('@/views/DeepWriteV3View.vue'),
     meta: { title: '新闻工作室' }
+  },
+  {
+    path: '/reading-copilot',
+    name: 'ReadingCopilot',
+    component: () => import('@/views/ReadingCopilotView.vue'),
+    meta: { title: '长文伴读' }
   }
 ]
 

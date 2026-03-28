@@ -47,6 +47,11 @@
           <span>深度阅读</span>
         </el-menu-item>
 
+        <el-menu-item index="/reading-copilot">
+          <el-icon><List /></el-icon>
+          <span>长文伴读</span>
+        </el-menu-item>
+
         <el-menu-item index="/deep-write-v3">
           <el-icon><Edit /></el-icon>
           <span>新闻工作室</span>
@@ -84,7 +89,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Document, Files, Monitor, Setting, Reading, MagicStick, SwitchButton, QuestionFilled, Fold, Expand, Edit } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, Files, Monitor, Setting, Reading, MagicStick, SwitchButton, QuestionFilled, Fold, Expand, Edit, List } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 
 const route = useRoute()

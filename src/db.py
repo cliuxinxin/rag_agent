@@ -142,6 +142,31 @@ def init_db():
             )
             ''')
 
+            # 长文伴读会话表
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS copilot_sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                word_count INTEGER DEFAULT 0,
+                read_time INTEGER DEFAULT 0,
+                summary_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            # 长文伴读对话表
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS copilot_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                role TEXT,
+                content TEXT,
+                quote_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(session_id) REFERENCES copilot_sessions(id) ON DELETE CASCADE
+            )
+            ''')
+
         logger.info("✅ 数据库结构检查/修复完成")
         _DB_INITIALIZED = True
     except Exception as e:
@@ -440,3 +465,98 @@ def delete_mastery_session(session_id: str):
     """删除学习记录"""
     with db_manager.get_connection() as conn:
         conn.execute("DELETE FROM mastery_sessions WHERE id = ?", (session_id,))
+
+# ==============================
+# 长文伴读 Copilot 相关方法
+# ==============================
+
+def create_copilot_session(title: str, word_count: int, read_time: int, summary_data: dict) -> str:
+    """创建新的长文伴读会话"""
+    session_id = str(uuid.uuid4())
+    try:
+        with db_manager.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO copilot_sessions (id, title, word_count, read_time, summary_data)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                session_id, 
+                title, 
+                word_count, 
+                read_time, 
+                json.dumps(summary_data, ensure_ascii=False)
+            ))
+        logger.info(f"创建长文伴读会话: {session_id} - {title}")
+        return session_id
+    except Exception as e:
+        logger.error(f"创建长文伴读会话失败: {e}", exc_info=True)
+        return session_id
+
+def get_all_copilot_sessions() -> List[Dict]:
+    """获取所有长文伴读会话列表"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+            SELECT id, title, word_count, read_time, created_at 
+            FROM copilot_sessions 
+            ORDER BY created_at DESC
+        ''')
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
+
+def get_copilot_session(session_id: str) -> Optional[Dict]:
+    """获取单个长文伴读会话详情"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+            SELECT * FROM copilot_sessions WHERE id = ?
+        ''', (session_id,))
+        row = c.fetchone()
+        if row:
+            data = dict(row)
+            try:
+                data['summary_data'] = json.loads(data['summary_data'])
+            except:
+                data['summary_data'] = {}
+            return data
+    return None
+
+def add_copilot_message(session_id: str, role: str, content: str, quote_text: str = None):
+    """添加伴读对话消息"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO copilot_messages (session_id, role, content, quote_text)
+            VALUES (?, ?, ?, ?)
+        ''', (session_id, role, content, quote_text))
+
+def get_copilot_messages(session_id: str) -> List[Dict]:
+    """获取会话的所有对话消息"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute('''
+            SELECT role, content, quote_text, created_at 
+            FROM copilot_messages 
+            WHERE session_id = ? 
+            ORDER BY id ASC
+        ''', (session_id,))
+        rows = c.fetchall()
+        return [dict(row) for row in rows]
+
+def delete_copilot_session(session_id: str):
+    """删除长文伴读会话及相关消息"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM copilot_sessions WHERE id = ?", (session_id,))
+        c.execute("DELETE FROM copilot_messages WHERE session_id = ?", (session_id,))
+        # 同时删除本地存储的文件和向量库
+        try:
+            md_path = STORAGE_DIR / f"copilot_{session_id}.md"
+            if md_path.exists():
+                md_path.unlink()
+            faiss_dir = STORAGE_DIR / f"copilot_{session_id}_faiss"
+            if faiss_dir.exists():
+                import shutil
+                shutil.rmtree(faiss_dir)
+        except Exception as e:
+            logger.warning(f"删除本地文件失败: {e}")
