@@ -1,164 +1,274 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional, List
-from src.graphs.copilot_graph import copilot_init_graph, copilot_chat_graph
+import json
+from io import BytesIO
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pypdf import PdfReader
+from pydantic import BaseModel, Field
+
 from src.db import (
-    get_all_copilot_sessions,
-    get_copilot_session,
-    get_copilot_messages,
+    STORAGE_DIR,
     add_copilot_message,
     delete_copilot_session,
-    STORAGE_DIR
+    get_all_copilot_sessions,
+    get_copilot_messages,
+    get_copilot_session,
+    update_copilot_session_summary_data,
 )
-from src.nodes.common import get_llm
+from src.graphs.copilot_graph import copilot_chat_graph, copilot_init_graph, load_session_meta
 from src.logger import get_logger
-llm_stream = get_llm().with_config({"streaming": True})
-from fastapi.responses import StreamingResponse
-import json
-from pathlib import Path
+from src.nodes.common import get_llm
+
 
 logger = get_logger("CopilotRoutes")
-
+llm_stream = get_llm().with_config({"streaming": True})
 router = APIRouter(tags=["copilot"])
 
-# ==============================
-# 请求模型
-# ==============================
 
 class InitRequest(BaseModel):
     raw_text: str
+
 
 class ChatRequest(BaseModel):
     session_id: str
     query: Optional[str] = ""
     quote_text: Optional[str] = ""
-    action: str = "question"  # explain/translate/summarize/question
+    quote_anchor: Optional[Dict[str, Any]] = None
+    action: str = Field(default="question")
 
-# ==============================
-# 接口实现
-# ==============================
+
+def read_text_file(path) -> str:
+    if not path.exists():
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def shorten(text: str, limit: int = 120) -> str:
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def update_memory_summary(session_id: str, query: str, answer: str, quote_text: str, references: Optional[list]):
+    session = get_copilot_session(session_id) or {}
+    summary_data = session.get("summary_data", {}) or {}
+    memory = summary_data.get("conversation_memory", {}) or {}
+
+    question_summary = shorten(query or quote_text or "继续追问")
+    answer_summary = shorten(answer, 180)
+    ref_title = (references or [{}])[0].get("section_title", "全文")
+    exchange_line = f"- 围绕《{ref_title}》：用户问“{question_summary}”；助手回答“{answer_summary}”"
+
+    existing_lines = [line for line in (memory.get("summary", "") or "").splitlines() if line.strip()]
+    existing_lines.append(exchange_line)
+    recent_exchanges = memory.get("recent_exchanges", []) or []
+    recent_exchanges.append(f"{ref_title} / {question_summary}")
+
+    summary_data["conversation_memory"] = {
+        "summary": "\n".join(existing_lines[-8:]),
+        "recent_exchanges": recent_exchanges[-6:],
+    }
+    update_copilot_session_summary_data(session_id, summary_data)
+
+
+async def init_copilot_from_text(raw_text: str):
+    if not raw_text or len(raw_text.strip()) == 0:
+        raise HTTPException(status_code=400, detail="文本不能为空")
+
+    logger.info(f"开始初始化长文伴读，文本长度：{len(raw_text)}")
+    result = await copilot_init_graph.ainvoke({"raw_text": raw_text})
+    logger.info(f"长文伴读初始化成功，session_id: {result['session_id']}")
+    return {"success": True, "session_id": result["session_id"]}
+
+
+def extract_pdf_text(file_bytes: bytes) -> Dict[str, Any]:
+    try:
+        reader = PdfReader(BytesIO(file_bytes))
+        pages = []
+        for index, page in enumerate(reader.pages):
+            text = (page.extract_text() or "").strip()
+            if not text:
+                continue
+            pages.append(text)
+
+        full_text = "\n\n".join(pages).strip()
+        return {
+            "text": full_text,
+            "page_count": len(reader.pages),
+            "non_empty_pages": len(pages),
+        }
+    except Exception as e:
+        logger.error(f"PDF 文本提取失败: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"PDF 解析失败: {str(e)}")
+
 
 @router.post("/init")
 async def init_copilot(request: InitRequest):
-    """初始化长文伴读，接收原始文本，返回session_id"""
     try:
-        if not request.raw_text or len(request.raw_text.strip()) == 0:
-            raise HTTPException(status_code=400, detail="文本不能为空")
-        
-        logger.info(f"开始初始化长文伴读，文本长度：{len(request.raw_text)}")
-        
-        # 执行初始化工作流
-        initial_state = {
-            "raw_text": request.raw_text
-        }
-        logger.debug("开始执行copilot_init_graph")
-        result = await copilot_init_graph.ainvoke(initial_state)
-        logger.info(f"长文伴读初始化成功，session_id: {result['session_id']}")
-        
-        return {
-            "success": True,
-            "session_id": result["session_id"]
-        }
+        return await init_copilot_from_text(request.raw_text)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"长文伴读初始化失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"初始化失败: {str(e)}")
 
+
+@router.post("/init_pdf")
+async def init_copilot_pdf(file: UploadFile = File(...)):
+    try:
+        filename = file.filename or ""
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="只支持 PDF 文件")
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="PDF 文件为空")
+
+        parsed = extract_pdf_text(content)
+        if not parsed["text"]:
+            raise HTTPException(status_code=400, detail="PDF 中未提取到可读文本")
+
+        result = await init_copilot_from_text(parsed["text"])
+        result["filename"] = filename
+        result["page_count"] = parsed["page_count"]
+        result["non_empty_pages"] = parsed["non_empty_pages"]
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF 长文伴读初始化失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PDF 初始化失败: {str(e)}")
+
+
 @router.get("/sessions")
 async def get_sessions():
-    """获取所有历史阅读项目列表"""
     try:
-        sessions = get_all_copilot_sessions()
-        return {
-            "success": True,
-            "data": sessions
-        }
+        return {"success": True, "data": get_all_copilot_sessions()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
 
+
 @router.get("/session/{session_id}")
 async def get_session(session_id: str):
-    """获取单篇文章详情"""
     try:
         session = get_copilot_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
-        
-        # 读取Markdown文件内容
+
         md_path = STORAGE_DIR / f"copilot_{session_id}.md"
+        raw_path = STORAGE_DIR / f"copilot_{session_id}_raw.txt"
         if not md_path.exists():
             raise HTTPException(status_code=404, detail="文章内容不存在")
-        
-        with open(md_path, 'r', encoding='utf-8') as f:
-            markdown_content = f.read()
-        
-        # 获取对话历史
+
+        markdown_content = read_text_file(md_path)
+        raw_text_content = read_text_file(raw_path)
         messages = get_copilot_messages(session_id)
-        
+        meta = load_session_meta(session_id)
+
         return {
             "success": True,
             "data": {
                 **session,
                 "markdown_content": markdown_content,
-                "messages": messages
-            }
+                "raw_text_content": raw_text_content,
+                "messages": messages,
+                "sections": meta.get("sections", []),
+                "chunk_count": len(meta.get("chunks", [])),
+            },
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
 
+
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """流式对话接口"""
-    try:
-        session = get_copilot_session(request.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="会话不存在")
-        
-        # 保存用户消息
-        add_copilot_message(
-            session_id=request.session_id,
-            role="user",
-            content=request.query,
-            quote_text=request.quote_text
-        )
-        
-        # 执行对话工作流获取上下文
-        state = {
-            "session_id": request.session_id,
-            "user_query": request.query,
-            "selected_text": request.quote_text,
-            "action": request.action
-        }
-        result = await copilot_chat_graph.ainvoke(state)
-        response_content = result["response"]
-        
-        # 保存助手消息
-        add_copilot_message(
-            session_id=request.session_id,
-            role="assistant",
-            content=response_content,
-            quote_text=request.quote_text
-        )
-        
-        # 流式输出
-        async def generate():
-            for chunk in response_content:
-                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-        
-        return StreamingResponse(generate(), media_type="text/event-stream")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"对话失败: {str(e)}")
+    session = get_copilot_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    async def generate():
+        response_content = ""
+        references = []
+        quote_anchor = request.quote_anchor or {}
+
+        try:
+            state = {
+                "session_id": request.session_id,
+                "user_query": request.query or "",
+                "selected_text": request.quote_text or "",
+                "quote_anchor": request.quote_anchor or {},
+                "action": request.action or "question",
+            }
+            prepared = await copilot_chat_graph.ainvoke(state)
+            references = prepared.get("references", []) or []
+            if references and not quote_anchor:
+                quote_anchor = references[0]
+
+            add_copilot_message(
+                session_id=request.session_id,
+                role="user",
+                content=request.query or "",
+                quote_text=request.quote_text,
+                quote_anchor=quote_anchor,
+            )
+
+            yield f"data: {json.dumps({'type': 'meta', 'references': references, 'quote_anchor': quote_anchor}, ensure_ascii=False)}\n\n"
+
+            async for chunk in llm_stream.astream(prepared["response_prompt"]):
+                content = chunk.content if isinstance(chunk.content, str) else ""
+                if not content:
+                    continue
+                response_content += content
+                yield f"data: {json.dumps({'type': 'chunk', 'content': content}, ensure_ascii=False)}\n\n"
+
+            response_content = response_content.strip()
+            add_copilot_message(
+                session_id=request.session_id,
+                role="assistant",
+                content=response_content,
+                quote_text=request.quote_text,
+                quote_anchor=quote_anchor or (references[0] if references else None),
+            )
+            update_memory_summary(
+                session_id=request.session_id,
+                query=request.query or "",
+                answer=response_content,
+                quote_text=request.quote_text or "",
+                references=references,
+            )
+
+            final_message = {
+                "role": "assistant",
+                "content": response_content,
+                "quote_text": request.quote_text,
+                "quote_anchor": quote_anchor or (references[0] if references else None),
+                "references": references,
+            }
+            yield f"data: {json.dumps({'type': 'done', 'message': final_message}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"长文伴读对话失败: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
-    """删除会话"""
     try:
         delete_copilot_session(session_id)
-        return {
-            "success": True,
-            "message": "删除成功"
-        }
+        return {"success": True, "message": "删除成功"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")

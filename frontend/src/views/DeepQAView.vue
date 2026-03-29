@@ -183,6 +183,7 @@ const currentProject = ref<Project | null>(null)
 const isLoading = ref(false)
 const progressNodes = ref<any[]>([])
 const newQuestion = ref('')
+const DEEP_QA_SEED_KEY = 'reading-copilot:deep-qa-seed'
 
 const newProjectForm = reactive({
   title: '',
@@ -232,6 +233,29 @@ const handleCreateProject = () => {
 
 const loadProject = (p: Project) => {
   currentProject.value = p
+}
+
+const hydrateFromCopilotSeed = () => {
+  try {
+    const raw = localStorage.getItem(DEEP_QA_SEED_KEY)
+    if (!raw) return
+    const seed = JSON.parse(raw)
+    localStorage.removeItem(DEEP_QA_SEED_KEY)
+
+    const project: Project = {
+      title: seed.title || '来自长文伴读的深挖问题',
+      topic: seed.topic || '继续深挖当前文章的关键观点',
+      qa_pairs: [],
+      final_report: ''
+    }
+
+    currentProject.value = project
+    historyProjects.value.unshift(project)
+    newQuestion.value = seed.question || ''
+    ElMessage.success('已带入伴读问题，请选择知识库后开始深挖')
+  } catch (error) {
+    console.error('读取长文伴读种子失败:', error)
+  }
 }
 
 const handleDeepAnalysis = async () => {
@@ -356,6 +380,7 @@ const generateFinalReport = async () => {
 
 onMounted(() => {
   fetchKbs()
+  hydrateFromCopilotSeed()
 })
 </script>
 

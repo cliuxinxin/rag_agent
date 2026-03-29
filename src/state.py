@@ -223,17 +223,23 @@ class CopilotState(TypedDict):
     session_id: str                # 会话ID
     user_query: str                # 用户提问
     selected_text: str             # 用户划选的文本
+    quote_anchor: Dict[str, Any]   # 引用锚点
     action: str                    # 操作类型: explain/translate/summarize/question
-    
+
     # 初始化阶段输出
     formatted_markdown: str        # 排版后的Markdown文本
+    sections: List[Dict[str, Any]] # 章节结构
+    chunks: List[Dict[str, Any]]   # 切块结构
     summary_data: Dict[str, Any]   # 摘要数据: {"summary": "...", "takeaways": []}
     word_count: int                # 总字数
     read_time: int                 # 预估阅读时间(分钟)
     vector_store: Any              # FAISS向量存储
-    
+
     # 对话阶段输出
     context: str                   # 检索到的上下文
+    memory_context: str            # 对话记忆
+    references: List[Dict[str, Any]] # 当前回答引用
+    response_prompt: str           # 响应提示词
     response: str                  # AI回答
     messages: Annotated[List[BaseMessage], add_messages] # 对话历史
     

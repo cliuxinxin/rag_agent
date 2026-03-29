@@ -162,10 +162,25 @@ def init_db():
                 role TEXT,
                 content TEXT,
                 quote_text TEXT,
+                quote_anchor TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES copilot_sessions(id) ON DELETE CASCADE
             )
             ''')
+
+            copilot_columns_to_ensure = [
+                ("quote_anchor", "TEXT")
+            ]
+
+            for col_name, col_type in copilot_columns_to_ensure:
+                try:
+                    c.execute(f"ALTER TABLE copilot_messages ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"🔄 [DB迁移] 成功添加长文伴读消息新列: {col_name}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e):
+                        pass
+                    else:
+                        logger.warning(f"⚠️ [DB迁移] copilot_messages 列 {col_name} 检查警告: {e}")
 
         logger.info("✅ 数据库结构检查/修复完成")
         _DB_INITIALIZED = True
@@ -521,27 +536,53 @@ def get_copilot_session(session_id: str) -> Optional[Dict]:
             return data
     return None
 
-def add_copilot_message(session_id: str, role: str, content: str, quote_text: str = None):
+def update_copilot_session_summary_data(session_id: str, summary_data: dict):
+    """更新长文伴读会话摘要数据"""
+    with db_manager.get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE copilot_sessions SET summary_data = ? WHERE id = ?",
+            (json.dumps(summary_data, ensure_ascii=False), session_id)
+        )
+
+def add_copilot_message(session_id: str, role: str, content: str, quote_text: str = None, quote_anchor: Optional[Dict] = None):
     """添加伴读对话消息"""
     with db_manager.get_connection() as conn:
         c = conn.cursor()
         c.execute('''
-            INSERT INTO copilot_messages (session_id, role, content, quote_text)
-            VALUES (?, ?, ?, ?)
-        ''', (session_id, role, content, quote_text))
+            INSERT INTO copilot_messages (session_id, role, content, quote_text, quote_anchor)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            session_id,
+            role,
+            content,
+            quote_text,
+            json.dumps(quote_anchor, ensure_ascii=False) if quote_anchor else None
+        ))
 
 def get_copilot_messages(session_id: str) -> List[Dict]:
     """获取会话的所有对话消息"""
     with db_manager.get_connection() as conn:
         c = conn.cursor()
         c.execute('''
-            SELECT role, content, quote_text, created_at 
+            SELECT role, content, quote_text, quote_anchor, created_at 
             FROM copilot_messages 
             WHERE session_id = ? 
             ORDER BY id ASC
         ''', (session_id,))
         rows = c.fetchall()
-        return [dict(row) for row in rows]
+        messages = []
+        for row in rows:
+            data = dict(row)
+            if data.get("quote_anchor"):
+                try:
+                    data["quote_anchor"] = json.loads(data["quote_anchor"])
+                except Exception:
+                    data["quote_anchor"] = None
+            else:
+                data["quote_anchor"] = None
+            messages.append(data)
+        return messages
 
 def delete_copilot_session(session_id: str):
     """删除长文伴读会话及相关消息"""
@@ -554,6 +595,12 @@ def delete_copilot_session(session_id: str):
             md_path = STORAGE_DIR / f"copilot_{session_id}.md"
             if md_path.exists():
                 md_path.unlink()
+            raw_path = STORAGE_DIR / f"copilot_{session_id}_raw.txt"
+            if raw_path.exists():
+                raw_path.unlink()
+            meta_path = STORAGE_DIR / f"copilot_{session_id}_meta.json"
+            if meta_path.exists():
+                meta_path.unlink()
             faiss_dir = STORAGE_DIR / f"copilot_{session_id}_faiss"
             if faiss_dir.exists():
                 import shutil

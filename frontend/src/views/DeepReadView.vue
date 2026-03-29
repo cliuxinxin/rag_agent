@@ -162,11 +162,33 @@ const currentReportId = ref<string | null>(null)
 const currentReportTitle = ref<string>('')
 const reportList = ref<any[]>([])
 const reportArea = ref<HTMLElement | null>(null)
+const DEEP_READ_SEED_KEY = 'reading-copilot:deep-read-seed'
 
 // --- 生命周期 ---
 onMounted(() => {
   fetchReports()
+  hydrateFromCopilotSeed()
 })
+
+const hydrateFromCopilotSeed = () => {
+  try {
+    const raw = localStorage.getItem(DEEP_READ_SEED_KEY)
+    if (!raw) return
+    const seed = JSON.parse(raw)
+    localStorage.removeItem(DEEP_READ_SEED_KEY)
+
+    inputMode.value = 'text'
+    pastedText.value = seed.text || ''
+    currentReportTitle.value = seed.title || '来自长文伴读'
+    showUpload.value = true
+
+    if (pastedText.value) {
+      ElMessage.success('已带入长文伴读内容，可以直接开始深度分析')
+    }
+  } catch (error) {
+    console.error('读取长文伴读种子失败:', error)
+  }
+}
 
 // --- 数据获取 ---
 const fetchReports = async () => {
