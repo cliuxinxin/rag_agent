@@ -1,0 +1,17 @@
+credentials:
+  usernames:
+    admin:
+      name: Admin User
+      email: admin@example.com
+      # 下面粘贴你刚才生成的哈希密码
+      password: $2b$12$oDxipowE1p84Liz/sFbz7eEm2M/m4.PWulRyRjUh7P5zlAXpH60ki
+    user1:
+      name: Regular User
+      email: user1@example.com
+      # 下面粘贴你刚才生成的哈希密码
+      password: $2b$12$pBqai6UuguhOmw7putsvo.WhsDvbC7JTlGFJlwjsilKzljdqh.Svi
+
+cookie:
+  expiry_days: 30
+  key: random_signature_key # 随便写一串复杂的字符，用于加密 Cookie
+  name: deepseek_rag_cookie
