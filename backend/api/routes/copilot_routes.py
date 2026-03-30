@@ -1,9 +1,10 @@
 import json
+import re
 from io import BytesIO
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pypdf import PdfReader
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,10 @@ class ChatRequest(BaseModel):
     action: str = Field(default="question")
 
 
+class NotesRequest(BaseModel):
+    content: str = ""
+
+
 def read_text_file(path) -> str:
     if not path.exists():
         return ""
@@ -50,6 +55,168 @@ def shorten(text: str, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+def sanitize_filename(text: str, default: str = "reading-copilot") -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|]+", "-", (text or "")).strip().strip(".")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return (cleaned[:60] or default).strip()
+
+
+def quote_yaml(text: str) -> str:
+    return json.dumps(text or "", ensure_ascii=False)
+
+
+def normalize_markdown_for_obsidian(text: str) -> str:
+    normalized = re.sub(r'<mark class="[^"]+">(.*?)</mark>', r'==\1==', text or "", flags=re.DOTALL)
+    return normalized.strip()
+
+
+def build_callout(title: str, items: list[str], kind: str = "note") -> str:
+    cleaned = [item.strip() for item in (items or []) if item and item.strip()]
+    if not cleaned:
+        return ""
+    lines = [f"> [!{kind}] {title}"]
+    lines.extend(f"> - {item}" for item in cleaned)
+    return "\n".join(lines)
+
+
+def build_obsidian_markdown(session: Dict[str, Any], markdown_content: str, messages: list[Dict[str, Any]], meta: Dict[str, Any]) -> str:
+    summary_data = session.get("summary_data", {}) or {}
+    title = session.get("title") or "长文伴读"
+    section_summaries = summary_data.get("section_summaries", []) or []
+    study_guide = summary_data.get("study_guide", {}) or {}
+    argument_map = summary_data.get("argument_map", {}) or {}
+    reader_notes = (summary_data.get("reader_notes") or "").strip()
+    created_at = session.get("created_at", "")
+    note_lines = [
+        "---",
+        f"title: {quote_yaml(title)}",
+        f"created: {quote_yaml(created_at)}",
+        f"word_count: {session.get('word_count', 0)}",
+        f"read_time: {session.get('read_time', 0)}",
+        f"section_count: {len(meta.get('sections', []) or [])}",
+        "tags:",
+        "  - reading-copilot",
+        "  - ai-companion",
+        "---",
+        "",
+        f"# {title}",
+        "",
+    ]
+
+    summary = (summary_data.get("summary") or "").strip()
+    if summary:
+        note_lines.extend([
+            "> [!summary] 一句话总结",
+            f"> {summary}",
+            "",
+        ])
+
+    takeaways_block = build_callout("核心看点", summary_data.get("takeaways", []), "tip")
+    if takeaways_block:
+        note_lines.extend([takeaways_block, ""])
+
+    note_lines.append("## 阅读路线")
+    note_lines.append("")
+    for heading, key in [
+        ("开始前先抓", "before_reading"),
+        ("阅读时留意", "while_reading"),
+        ("读完后检验", "after_reading"),
+    ]:
+        block = build_callout(heading, study_guide.get(key, []), "note")
+        if block:
+            note_lines.extend([block, ""])
+
+    if reader_notes:
+        note_lines.extend([
+            "## 我的笔记",
+            "",
+            reader_notes,
+            "",
+        ])
+
+    claims = argument_map.get("claims", []) or []
+    tensions = argument_map.get("tensions", []) or []
+    if claims or tensions:
+        note_lines.extend([
+            "## 关键判断",
+            "",
+        ])
+        for index, claim in enumerate(claims, start=1):
+            note_lines.extend([
+                f"### 判断 {index}",
+                "",
+                f"- 结论：{claim.get('claim', '').strip()}",
+                f"- 依据：{claim.get('evidence', '').strip() or '未提供'}",
+            ])
+            if claim.get("section_id"):
+                note_lines.append(f"- 相关章节：{claim['section_id']}")
+            note_lines.append("")
+        if tensions:
+            tension_block = build_callout("值得再想一层", tensions, "warning")
+            if tension_block:
+                note_lines.extend([tension_block, ""])
+
+    open_questions = summary_data.get("open_questions", []) or []
+    if open_questions:
+        note_lines.extend([
+            "## 继续深挖",
+            "",
+        ])
+        note_lines.extend(f"- {item}" for item in open_questions if item)
+        note_lines.append("")
+
+    if section_summaries:
+        note_lines.extend([
+            "## 章节陪读",
+            "",
+        ])
+        for section in section_summaries:
+            note_lines.extend([
+                f"### {section.get('title', '未命名章节')}",
+                "",
+                f"- 这一节讲了什么：{section.get('summary', '').strip() or '暂无'}",
+            ])
+            if section.get("role_in_article"):
+                note_lines.append(f"- 它在全文里的作用：{section['role_in_article'].strip()}")
+            takeaways = [item for item in section.get("takeaways", []) if item]
+            if takeaways:
+                note_lines.append("- 这一节的关键点：")
+                note_lines.extend(f"  - {item}" for item in takeaways)
+            if section.get("hidden_assumption"):
+                note_lines.append(f"- 隐含前提：{section['hidden_assumption'].strip()}")
+            if section.get("question"):
+                note_lines.append(f"- 可继续追问：{section['question'].strip()}")
+            note_lines.append("")
+
+    if messages:
+        note_lines.extend([
+            "## 伴读对话",
+            "",
+        ])
+        for message in messages:
+            role = "我" if message.get("role") == "user" else "AI 伴读"
+            note_lines.append(f"### {role}")
+            note_lines.append("")
+            if message.get("quote_text"):
+                note_lines.append(f"> {message['quote_text'].strip()}")
+                note_lines.append("")
+            content = (message.get("content") or "").strip()
+            if content:
+                note_lines.append(content)
+                note_lines.append("")
+
+    article_markdown = normalize_markdown_for_obsidian(markdown_content)
+    if article_markdown:
+        note_lines.extend([
+            "## 文章正文",
+            "",
+            article_markdown,
+            "",
+        ])
+
+    return "\n".join(note_lines).strip() + "\n"
 
 
 def update_memory_summary(session_id: str, query: str, answer: str, quote_text: str, references: Optional[list]):
@@ -183,6 +350,53 @@ async def get_session(session_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
+
+
+@router.post("/session/{session_id}/notes")
+async def save_session_notes(session_id: str, request: NotesRequest):
+    try:
+        session = get_copilot_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        summary_data = session.get("summary_data", {}) or {}
+        summary_data["reader_notes"] = request.content or ""
+        update_copilot_session_summary_data(session_id, summary_data)
+        return {"success": True, "data": {"reader_notes": summary_data["reader_notes"]}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存笔记失败: {str(e)}")
+
+
+@router.get("/session/{session_id}/export_md")
+async def export_session_markdown(session_id: str):
+    try:
+        session = get_copilot_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        md_path = STORAGE_DIR / f"copilot_{session_id}.md"
+        if not md_path.exists():
+            raise HTTPException(status_code=404, detail="文章内容不存在")
+
+        markdown_content = read_text_file(md_path)
+        messages = get_copilot_messages(session_id)
+        meta = load_session_meta(session_id)
+        payload = build_obsidian_markdown(session, markdown_content, messages, meta)
+        filename = sanitize_filename(session.get("title") or "长文伴读") + ".md"
+
+        return Response(
+            content=payload,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出 Markdown 失败: {str(e)}")
 
 
 @router.post("/chat/stream")

@@ -4,9 +4,24 @@
       <div class="top-bar-left">
         <el-button @click="showImportDialog = true" type="primary" :icon="Plus">导入长文本</el-button>
         <el-button @click="showSessions = !showSessions" :icon="List">历史项目</el-button>
+        <el-button
+          v-if="currentSessionId"
+          plain
+          :icon="Download"
+          :loading="isExporting"
+          @click="downloadSessionMarkdown"
+        >
+          导出 Markdown
+        </el-button>
       </div>
 
       <div class="top-bar-right" v-if="currentSessionId">
+        <div class="top-stat-pill">
+          <span>进度 {{ Math.round(readingProgress) }}%</span>
+          <span>{{ sessionData?.word_count || 0 }} 字</span>
+          <span>{{ sessionData?.read_time || 0 }} 分钟</span>
+        </div>
+
         <el-button-group>
           <el-button @click="viewMode = 'formatted'" :type="viewMode === 'formatted' ? 'primary' : ''">伴读稿</el-button>
           <el-button @click="viewMode = 'raw'" :type="viewMode === 'raw' ? 'primary' : ''">原文</el-button>
@@ -37,52 +52,89 @@
     </div>
 
     <div class="main-content" v-if="currentSessionId">
-      <aside class="sidebar-left">
-        <el-tabs v-model="leftSidebarTab" type="border-card">
-          <el-tab-pane label="目录" name="toc">
-            <div class="toc-list">
-              <button
-                v-for="heading in tableOfContents"
-                :key="heading.id"
-                class="toc-item"
-                :class="{ active: heading.id === currentSectionId }"
-                @click="scrollToHeading(heading.id)"
-              >
-                <span class="toc-title">{{ heading.text }}</span>
-                <span class="toc-meta">{{ heading.word_count || 0 }}字</span>
-              </button>
-            </div>
-          </el-tab-pane>
+      <aside class="left-rail">
+        <div class="rail-scroll">
+          <section class="panel-card overview-card">
+            <div class="eyebrow">AI 伴读总览</div>
+            <h2>{{ sessionData?.title || '长文伴读' }}</h2>
+            <p class="overview-summary">{{ sessionData?.summary_data?.summary || '正在整理导读...' }}</p>
 
-          <el-tab-pane label="章节" name="sections">
-            <div class="section-cards">
-              <article
-                v-for="section in sectionSummaries"
-                :key="section.id"
-                class="section-card"
-                :class="{ active: section.id === currentSectionId }"
-              >
-                <div class="section-card-header">
-                  <h4>{{ section.title }}</h4>
-                  <span>{{ section.word_count || 0 }}字</span>
-                </div>
-                <p>{{ section.summary }}</p>
-                <ul v-if="section.takeaways?.length">
-                  <li v-for="point in section.takeaways" :key="point">{{ point }}</li>
+            <div class="metric-row">
+              <div class="metric-pill">
+                <span class="metric-label">当前章节</span>
+                <strong>{{ currentSectionTitle || '从开头开始' }}</strong>
+              </div>
+              <div class="metric-pill">
+                <span class="metric-label">阅读耗时</span>
+                <strong>{{ sessionData?.read_time || 0 }} 分钟</strong>
+              </div>
+            </div>
+
+            <div class="reading-progress-shell compact">
+              <div class="reading-progress-bar" :style="{ width: `${readingProgress}%` }"></div>
+            </div>
+          </section>
+
+          <section class="panel-card" v-if="hasStudyGuide">
+            <div class="section-head">
+              <h3>阅读路线</h3>
+              <span>按这个顺序更容易读懂</span>
+            </div>
+
+            <div class="guide-grid">
+              <article class="guide-step" v-if="studyGuide.before_reading?.length">
+                <div class="guide-label">开始前先抓</div>
+                <ul>
+                  <li v-for="item in studyGuide.before_reading" :key="item">{{ item }}</li>
                 </ul>
-                <div v-if="section.question" class="section-question">可追问：{{ section.question }}</div>
-                <div class="section-actions">
-                  <el-button size="small" @click="scrollToHeading(section.id)">跳到这里</el-button>
-                  <el-button size="small" type="primary" plain @click="useSuggestedQuestion(section.question || `这节《${section.title}》最重要的意思是什么？`)">追问这节</el-button>
-                </div>
+              </article>
+
+              <article class="guide-step" v-if="studyGuide.while_reading?.length">
+                <div class="guide-label">阅读时留意</div>
+                <ul>
+                  <li v-for="item in studyGuide.while_reading" :key="item">{{ item }}</li>
+                </ul>
+              </article>
+
+              <article class="guide-step" v-if="studyGuide.after_reading?.length">
+                <div class="guide-label">读完后检验</div>
+                <ul>
+                  <li v-for="item in studyGuide.after_reading" :key="item">{{ item }}</li>
+                </ul>
               </article>
             </div>
-          </el-tab-pane>
-        </el-tabs>
+          </section>
+
+          <section class="panel-card">
+            <div class="section-head">
+              <h3>章节地图</h3>
+              <span>{{ sectionCards.length }} 节</span>
+            </div>
+
+            <div class="section-list">
+              <button
+                v-for="section in sectionCards"
+                :key="section.id"
+                class="section-link"
+                :class="{ active: section.id === currentSectionId }"
+                @click="scrollToHeading(section.id)"
+              >
+                <div class="section-link-top">
+                  <strong>{{ section.title }}</strong>
+                  <span>{{ section.word_count || 0 }} 字</span>
+                </div>
+                <p v-if="section.summary">{{ section.summary }}</p>
+                <div class="section-link-meta">
+                  {{ section.role_in_article || section.question || '点击跳到这一节继续阅读' }}
+                </div>
+              </button>
+            </div>
+          </section>
+        </div>
       </aside>
 
       <main
-        class="reading-area"
+        class="reading-stage"
         ref="readingAreaRef"
         @mouseup="handleTextSelection"
         @click="hideSelectionMenu"
@@ -94,177 +146,274 @@
           <div class="reading-progress-bar" :style="{ width: `${readingProgress}%` }"></div>
         </div>
 
-        <div class="reading-status">
-          <span>阅读进度 {{ Math.round(readingProgress) }}%</span>
-          <span>{{ currentSectionTitle || '准备开始' }}</span>
+        <div class="reading-stage-header">
+          <div class="stage-title">
+            <div class="eyebrow">当前在读</div>
+            <h1>{{ currentSectionTitle || sessionData?.title || '准备开始阅读' }}</h1>
+          </div>
+          <div class="stage-meta">
+            <span>阅读进度 {{ Math.round(readingProgress) }}%</span>
+            <span>字号 {{ fontSize }}</span>
+          </div>
         </div>
+
+        <section v-if="currentSectionSummary" class="focus-card">
+          <div class="focus-grid">
+            <div class="focus-item">
+              <span class="focus-label">这节在讲什么</span>
+              <p>{{ currentSectionSummary.summary || '这一节的摘要还在整理中。' }}</p>
+            </div>
+            <div class="focus-item">
+              <span class="focus-label">它在全文中的作用</span>
+              <p>{{ currentSectionSummary.role_in_article || '先看它怎么承接上文、推进结论。' }}</p>
+            </div>
+          </div>
+
+          <div class="soft-chip-row">
+            <button
+              class="soft-chip"
+              @click="useSuggestedQuestion(`这一节《${currentSectionSummary.title}》在全文里起什么作用？`)"
+            >
+              问这节的作用
+            </button>
+            <button
+              class="soft-chip"
+              @click="useSuggestedQuestion(`这一节《${currentSectionSummary.title}》最值得怀疑的前提是什么？`)"
+            >
+              找隐含前提
+            </button>
+            <button
+              v-if="currentSectionSummary.question"
+              class="soft-chip"
+              @click="useSuggestedQuestion(currentSectionSummary.question)"
+            >
+              继续追问这节
+            </button>
+          </div>
+        </section>
 
         <div v-if="viewMode === 'formatted'" v-html="renderedMarkdown" class="markdown-content"></div>
         <div v-else class="raw-content">{{ sessionData?.raw_text_content || '' }}</div>
       </main>
 
-      <aside class="sidebar-right">
-        <el-tabs v-model="activeTab" type="border-card">
-          <el-tab-pane label="导读" name="guide">
-            <div class="guide-card">
-              <div class="hero-summary">
-                <div class="hero-label">一句话总结</div>
-                <p>{{ sessionData?.summary_data?.summary || '加载中...' }}</p>
-              </div>
+      <aside class="coach-panel">
+        <div class="coach-scroll">
+          <section class="panel-card coach-card" v-if="currentSectionSummary">
+            <div class="section-head">
+              <h3>当前章节陪读</h3>
+              <span>{{ currentSectionSummary.word_count || 0 }} 字</span>
+            </div>
 
-              <div class="guide-actions">
-                <el-button size="small" @click="runArticleQuiz">考考我</el-button>
-                <el-button size="small" @click="useSuggestedQuestion('这篇文章最值得质疑的地方是什么？')">找漏洞</el-button>
-                <el-button size="small" @click="useSuggestedQuestion('作者有哪些隐含前提没有说透？')">找前提</el-button>
-              </div>
+            <p class="coach-summary">{{ currentSectionSummary.summary }}</p>
 
-              <section class="guide-section">
-                <h4>核心看点</h4>
-                <ul>
-                  <li v-for="point in sessionData?.summary_data?.takeaways || []" :key="point">{{ point }}</li>
-                </ul>
-              </section>
+            <ul class="bullet-list" v-if="currentSectionSummary.takeaways?.length">
+              <li v-for="point in currentSectionSummary.takeaways" :key="point">{{ point }}</li>
+            </ul>
 
-              <section class="guide-section" v-if="guideClaims.length">
-                <h4>关键判断</h4>
-                <div class="claim-list">
-                  <article v-for="(claim, index) in guideClaims" :key="`${claim.claim}-${index}`" class="claim-card">
-                    <p class="claim-text">{{ claim.claim }}</p>
-                    <p class="claim-evidence">{{ claim.evidence }}</p>
-                    <div class="claim-actions">
-                      <el-button size="small" @click="jumpToClaim(claim.section_id)">跳转原文</el-button>
-                      <el-button size="small" type="primary" plain @click="useSuggestedQuestion(`文中“${claim.claim}”的依据够不够强？`)">继续追问</el-button>
-                    </div>
-                  </article>
+            <div class="mini-note" v-if="currentSectionSummary.hidden_assumption">
+              <span class="mini-note-label">隐含前提</span>
+              <p>{{ currentSectionSummary.hidden_assumption }}</p>
+            </div>
+
+            <div class="mini-note" v-if="currentSectionSummary.question">
+              <span class="mini-note-label">建议追问</span>
+              <p>{{ currentSectionSummary.question }}</p>
+              <el-button size="small" type="primary" plain @click="useSuggestedQuestion(currentSectionSummary.question)">直接发问</el-button>
+            </div>
+          </section>
+
+          <section class="panel-card coach-card">
+            <div class="section-head">
+              <h3>全文主线</h3>
+              <span>{{ sessionData?.chunk_count || 0 }} 段</span>
+            </div>
+
+            <ul class="bullet-list" v-if="sessionData?.summary_data?.takeaways?.length">
+              <li v-for="point in sessionData?.summary_data?.takeaways || []" :key="point">{{ point }}</li>
+            </ul>
+
+            <div class="claim-list" v-if="guideClaims.length">
+              <article v-for="(claim, index) in guideClaims.slice(0, 3)" :key="`${claim.claim}-${index}`" class="claim-card">
+                <p class="claim-text">{{ claim.claim }}</p>
+                <p class="claim-evidence">{{ claim.evidence }}</p>
+                <div class="claim-actions">
+                  <el-button size="small" @click="jumpToClaim(claim.section_id)">跳回原文</el-button>
+                  <el-button size="small" type="primary" plain @click="useSuggestedQuestion(`文中“${claim.claim}”的依据够不够强？`)">继续追问</el-button>
                 </div>
-              </section>
+              </article>
+            </div>
 
-              <section class="guide-section" v-if="guideTensions.length">
-                <h4>值得怀疑的地方</h4>
-                <ul>
-                  <li v-for="item in guideTensions" :key="item">{{ item }}</li>
-                </ul>
-              </section>
+            <div class="mini-note warning" v-if="guideTensions.length">
+              <span class="mini-note-label">值得多想一层</span>
+              <ul class="bullet-list compact-list">
+                <li v-for="item in guideTensions" :key="item">{{ item }}</li>
+              </ul>
+            </div>
 
-              <section class="guide-section" v-if="openQuestions.length">
-                <h4>继续深挖</h4>
-                <div class="question-chips">
-                  <button
-                    v-for="question in openQuestions"
-                    :key="question"
-                    class="question-chip"
-                    @click="useSuggestedQuestion(question)"
-                  >
-                    {{ question }}
-                  </button>
-                </div>
-              </section>
+            <div class="soft-chip-row" v-if="openQuestions.length">
+              <button
+                v-for="question in openQuestions.slice(0, 4)"
+                :key="question"
+                class="soft-chip"
+                @click="useSuggestedQuestion(question)"
+              >
+                {{ question }}
+              </button>
+            </div>
+          </section>
 
-              <div class="meta-info">
-                <span>字数 {{ sessionData?.word_count || 0 }}</span>
-                <span>预计 {{ sessionData?.read_time || 0 }} 分钟</span>
-                <span>切块 {{ sessionData?.chunk_count || 0 }}</span>
+          <section class="panel-card notes-card">
+            <div class="section-head">
+              <h3>我的笔记</h3>
+              <div class="notes-head-actions">
+                <span class="notes-status" :class="{ dirty: notesDirty }">{{ notesDirty ? '未保存' : '已保存' }}</span>
+                <el-button size="small" @click="saveReaderNotes" :loading="isSavingNotes" :disabled="!notesDirty">保存</el-button>
               </div>
             </div>
-          </el-tab-pane>
 
-          <el-tab-pane label="播客" name="podcast">
-            <div class="podcast-card">
+            <el-input
+              v-model="readerNotes"
+              type="textarea"
+              :rows="8"
+              placeholder="把你真正学到的东西写下来。导出的 Markdown 会自动带上这些笔记。"
+              @input="notesDirty = true"
+            />
+
+            <div class="notes-footer">
+              <span>建议记下：作者主张、你的质疑、准备带走的行动。</span>
+              <el-button size="small" plain :icon="Download" :loading="isExporting" @click="downloadSessionMarkdown">导出到 Obsidian</el-button>
+            </div>
+          </section>
+
+          <section class="panel-card chat-card">
+            <div class="section-head">
+              <h3>伴读对话</h3>
+              <span>围绕当前章节继续问</span>
+            </div>
+
+            <div class="soft-chip-row" v-if="quickQuestions.length">
+              <button
+                v-for="question in quickQuestions"
+                :key="question"
+                class="soft-chip"
+                @click="useSuggestedQuestion(question)"
+              >
+                {{ question }}
+              </button>
+            </div>
+
+            <div class="chat-messages" ref="chatMessagesRef">
+              <div
+                v-for="(msg, index) in chatMessages"
+                :key="index"
+                class="message-item"
+                :class="msg.role"
+              >
+                <div
+                  v-if="msg.quote_text"
+                  class="quote-text"
+                  :class="{ clickable: !!msg.quote_anchor?.section_id }"
+                  @click="scrollToAnchor(msg.quote_anchor)"
+                >
+                  <div class="quote-head">
+                    <span class="quote-label">{{ msg.quote_anchor?.section_title || '引用原文' }}</span>
+                    <span v-if="msg.quote_anchor?.section_id" class="quote-jump">跳回原文</span>
+                  </div>
+                  <p>{{ msg.quote_text }}</p>
+                </div>
+
+                <div v-if="msg.role === 'assistant'" class="message-content assistant-markdown markdown-body" v-html="renderMessageMarkdown(msg.content)"></div>
+                <div v-else class="message-content user-text">{{ msg.content || '围绕引用继续发问' }}</div>
+
+                <div v-if="msg.references?.length" class="reference-row">
+                  <button
+                    v-for="ref in msg.references.slice(0, 3)"
+                    :key="`${ref.section_id}-${ref.chunk_id}-${ref.preview}`"
+                    class="reference-chip"
+                    @click="scrollToAnchor(ref)"
+                  >
+                    {{ ref.section_title || '参考段落' }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="isStreaming" class="message-item assistant">
+                <div
+                  v-if="streamingMeta.quote_anchor?.section_title || streamingMeta.references.length"
+                  class="quote-text"
+                  :class="{ clickable: !!streamingMeta.quote_anchor?.section_id }"
+                  @click="scrollToAnchor(streamingMeta.quote_anchor)"
+                >
+                  <div class="quote-head">
+                    <span class="quote-label">{{ streamingMeta.quote_anchor?.section_title || '参考段落' }}</span>
+                    <span v-if="streamingMeta.quote_anchor?.section_id" class="quote-jump">跳回原文</span>
+                  </div>
+                  <p>{{ streamingMeta.references[0]?.preview || '助手正在结合相关段落作答...' }}</p>
+                </div>
+                <div class="message-content assistant-markdown markdown-body" v-html="renderMessageMarkdown(streamingContent) + '<span class=&quot;cursor&quot;>▋</span>'"></div>
+                <div v-if="streamingMeta.references.length" class="reference-row">
+                  <button
+                    v-for="ref in streamingMeta.references.slice(0, 3)"
+                    :key="`${ref.section_id}-${ref.chunk_id}-${ref.preview}`"
+                    class="reference-chip"
+                    @click="scrollToAnchor(ref)"
+                  >
+                    {{ ref.section_title || '参考段落' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-input-area">
+              <div v-if="pendingQuoteText" class="pending-quote">
+                <span>{{ pendingQuoteAnchor?.section_title || '引用片段' }}：{{ pendingQuoteText }}</span>
+                <el-button @click="clearPendingQuote" type="text" :icon="Close" size="small"></el-button>
+              </div>
+
+              <el-input
+                v-model="userInput"
+                type="textarea"
+                :rows="3"
+                placeholder="输入你的问题，或者先划词再发问..."
+                @keydown.enter.prevent="sendMessage"
+              ></el-input>
+
+              <div class="chat-actions">
+                <el-button @click="sendMessage" type="primary" :disabled="isStreaming || (!userInput.trim() && !pendingQuoteText)">发送</el-button>
+                <el-button plain @click="runArticleQuiz" :disabled="isStreaming">考考我</el-button>
+                <el-button plain @click="useSuggestedQuestion('请帮我把这篇文章讲给完全不了解的人听')" :disabled="isStreaming">转述给朋友</el-button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel-card extra-card">
+            <div class="section-head">
+              <h3>延伸工具</h3>
+              <div class="tool-switcher">
+                <button class="tool-chip" :class="{ active: inspectorMode === 'graph' }" @click="inspectorMode = 'graph'">图谱</button>
+                <button class="tool-chip" :class="{ active: inspectorMode === 'podcast' }" @click="inspectorMode = 'podcast'">播客</button>
+              </div>
+            </div>
+
+            <div v-if="inspectorMode === 'graph'" class="tool-panel">
+              <div ref="graphRef" class="knowledge-graph"></div>
+              <p class="graph-hint">点知识图谱节点，会自动帮你生成一个更具体的追问。</p>
+            </div>
+
+            <div v-else class="tool-panel podcast-card">
               <div
                 v-for="(item, index) in sessionData?.summary_data?.podcast_script || []"
                 :key="`${item.speaker}-${index}`"
                 class="podcast-turn"
                 :class="item.speaker === 'A' ? 'host' : 'guest'"
               >
-                <div class="speaker">{{ item.speaker === 'A' ? '主播A' : '嘉宾B' }}</div>
+                <div class="speaker">{{ item.speaker === 'A' ? '主播 A' : '嘉宾 B' }}</div>
                 <p>{{ item.text }}</p>
               </div>
               <el-empty v-if="!(sessionData?.summary_data?.podcast_script || []).length" description="还没有播客脚本" />
             </div>
-          </el-tab-pane>
-
-          <el-tab-pane label="图谱" name="graph">
-            <div class="graph-card">
-              <div ref="graphRef" class="knowledge-graph"></div>
-              <p class="graph-hint">点节点会自动生成一个追问，方便继续伴读。</p>
-            </div>
-          </el-tab-pane>
-
-          <el-tab-pane label="伴读问答" name="chat">
-            <div class="chat-container">
-              <div class="chat-messages" ref="chatMessagesRef">
-                <div
-                  v-for="(msg, index) in chatMessages"
-                  :key="index"
-                  class="message-item"
-                  :class="msg.role"
-                >
-                  <div
-                    v-if="msg.quote_text"
-                    class="quote-text"
-                    :class="{ clickable: !!msg.quote_anchor?.section_id }"
-                    @click="scrollToAnchor(msg.quote_anchor)"
-                  >
-                    <div class="quote-head">
-                      <span class="quote-label">{{ msg.quote_anchor?.section_title || '引用原文' }}</span>
-                      <span v-if="msg.quote_anchor?.section_id" class="quote-jump">跳回原文</span>
-                    </div>
-                    <p>{{ msg.quote_text }}</p>
-                  </div>
-
-                  <div v-if="msg.role === 'assistant'" class="message-content assistant-markdown markdown-body" v-html="renderMessageMarkdown(msg.content)"></div>
-                  <div v-else class="message-content user-text">{{ msg.content || '围绕引用继续发问' }}</div>
-                </div>
-
-                <div v-if="isStreaming" class="message-item assistant">
-                  <div
-                    v-if="streamingMeta.quote_anchor?.section_title || streamingMeta.references.length"
-                    class="quote-text"
-                    :class="{ clickable: !!streamingMeta.quote_anchor?.section_id }"
-                    @click="scrollToAnchor(streamingMeta.quote_anchor)"
-                  >
-                    <div class="quote-head">
-                      <span class="quote-label">{{ streamingMeta.quote_anchor?.section_title || '参考段落' }}</span>
-                      <span v-if="streamingMeta.quote_anchor?.section_id" class="quote-jump">跳回原文</span>
-                    </div>
-                    <p>{{ streamingMeta.references[0]?.preview || '助手正在结合相关段落作答…' }}</p>
-                  </div>
-                  <div class="message-content assistant-markdown markdown-body" v-html="renderMessageMarkdown(streamingContent) + '<span class=&quot;cursor&quot;>▋</span>'"></div>
-                </div>
-              </div>
-
-              <div class="chat-input-area">
-                <div v-if="pendingQuoteText" class="pending-quote">
-                  <span>{{ pendingQuoteAnchor?.section_title || '引用片段' }}：{{ pendingQuoteText }}</span>
-                  <el-button @click="clearPendingQuote" type="text" :icon="Close" size="small"></el-button>
-                </div>
-
-                <div class="quick-question-row" v-if="quickQuestions.length">
-                  <button
-                    v-for="question in quickQuestions"
-                    :key="question"
-                    class="quick-question"
-                    @click="useSuggestedQuestion(question)"
-                  >
-                    {{ question }}
-                  </button>
-                </div>
-
-                <el-input
-                  v-model="userInput"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="输入你的问题，或者先划词再发问…"
-                  @keyup.enter="sendMessage"
-                ></el-input>
-                <div class="chat-actions">
-                  <el-button @click="sendMessage" type="primary" :disabled="isStreaming || (!userInput.trim() && !pendingQuoteText)">发送</el-button>
-                  <el-button plain @click="useSuggestedQuestion('请帮我把这篇文章讲给完全不了解的人听')">转述给朋友</el-button>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-        </el-tabs>
+          </section>
+        </div>
       </aside>
     </div>
 
@@ -340,7 +489,7 @@
         >
           <div class="session-title">{{ session.title }}</div>
           <div class="session-meta">
-            <span>{{ session.word_count }}字 · {{ session.read_time }}分钟</span>
+            <span>{{ session.word_count }} 字 · {{ session.read_time }} 分钟</span>
             <span>{{ formatTime(session.created_at) }}</span>
           </div>
         </button>
@@ -353,7 +502,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { Close, List, Minus, Plus, UploadFilled } from '@element-plus/icons-vue'
+import { Close, Download, List, Minus, Plus, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import apiClient from '@/api'
@@ -363,6 +512,17 @@ interface QuoteAnchor {
   section_id?: string
   section_title?: string
   preview?: string
+}
+
+interface SectionSummary {
+  id: string
+  title: string
+  word_count?: number
+  summary?: string
+  role_in_article?: string
+  takeaways?: string[]
+  question?: string
+  hidden_assumption?: string
 }
 
 interface ChatMessage {
@@ -383,6 +543,7 @@ interface SessionData {
   messages: ChatMessage[]
   sections: Array<{ id: string; title: string; word_count?: number }>
   chunk_count: number
+  created_at?: string
 }
 
 const router = useRouter()
@@ -398,6 +559,9 @@ const importMode = ref<'text' | 'pdf'>('text')
 const importText = ref('')
 const selectedImportFile = ref<File | null>(null)
 const isImporting = ref(false)
+const isExporting = ref(false)
+const isSavingNotes = ref(false)
+const notesDirty = ref(false)
 const currentSessionId = ref('')
 const sessionData = ref<SessionData | null>(null)
 const sessions = ref<any[]>([])
@@ -407,10 +571,10 @@ const fontSize = ref(16)
 const lineHeight = ref(1.9)
 const viewMode = ref<'formatted' | 'raw'>('formatted')
 const activeLens = ref<'all' | 'data' | 'entity' | 'logic'>('all')
-const activeTab = ref<'guide' | 'podcast' | 'graph' | 'chat'>('guide')
-const leftSidebarTab = ref<'toc' | 'sections'>('toc')
+const inspectorMode = ref<'graph' | 'podcast'>('graph')
 const chatMessages = ref<ChatMessage[]>([])
 const userInput = ref('')
+const readerNotes = ref('')
 const isStreaming = ref(false)
 const streamingContent = ref('')
 const streamingMeta = ref<{ references: QuoteAnchor[]; quote_anchor: QuoteAnchor | null }>({
@@ -443,20 +607,42 @@ const tableOfContents = computed(() => {
     word_count: section.word_count,
   }))
 })
-const sectionSummaries = computed(() => sessionData.value?.summary_data?.section_summaries || [])
-const openQuestions = computed(() => sessionData.value?.summary_data?.open_questions || [])
-const guideClaims = computed(() => sessionData.value?.summary_data?.argument_map?.claims || [])
-const guideTensions = computed(() => sessionData.value?.summary_data?.argument_map?.tensions || [])
-const quickQuestions = computed(() => {
-  const sectionQuestions = sectionSummaries.value
-    .map((item: any) => item.question)
-    .filter(Boolean)
-    .slice(0, 2)
-  return [...openQuestions.value.slice(0, 2), ...sectionQuestions].slice(0, 4)
+const sectionSummaries = computed<SectionSummary[]>(() => sessionData.value?.summary_data?.section_summaries || [])
+const sectionCards = computed<SectionSummary[]>(() => {
+  if (sectionSummaries.value.length) return sectionSummaries.value
+  return tableOfContents.value.map(item => ({
+    id: item.id,
+    title: item.text,
+    word_count: item.word_count,
+    summary: '',
+    role_in_article: '',
+    takeaways: [],
+    question: '',
+    hidden_assumption: '',
+  }))
 })
+const studyGuide = computed(() => sessionData.value?.summary_data?.study_guide || {})
+const hasStudyGuide = computed(() =>
+  ['before_reading', 'while_reading', 'after_reading'].some(key => (studyGuide.value?.[key] || []).length)
+)
+const openQuestions = computed<string[]>(() => sessionData.value?.summary_data?.open_questions || [])
+const guideClaims = computed(() => sessionData.value?.summary_data?.argument_map?.claims || [])
+const guideTensions = computed<string[]>(() => sessionData.value?.summary_data?.argument_map?.tensions || [])
 const currentSectionTitle = computed(() => {
   const match = tableOfContents.value.find(item => item.id === currentSectionId.value)
-  return match?.text || ''
+  return match?.text || sectionCards.value[0]?.title || ''
+})
+const currentSectionSummary = computed<SectionSummary | null>(() => {
+  return sectionCards.value.find(item => item.id === currentSectionId.value) || sectionCards.value[0] || null
+})
+const quickQuestions = computed<string[]>(() => {
+  const prompts = [
+    currentSectionSummary.value?.question,
+    currentSectionSummary.value ? `这一节《${currentSectionSummary.value.title}》在全文里起什么作用？` : '',
+    '作者最关键的论证链条是什么？',
+    ...openQuestions.value,
+  ].filter(Boolean) as string[]
+  return [...new Set(prompts)].slice(0, 4)
 })
 
 function sanitizeHtml(html: string) {
@@ -648,8 +834,9 @@ async function loadSession(sessionId: string) {
     sessionData.value = res.data
     chatMessages.value = (res.data.messages || []).map(normalizeMessage)
     renderedMarkdown.value = renderMarkdownToHtml(res.data.markdown_content || '')
-    activeTab.value = 'guide'
-    leftSidebarTab.value = 'toc'
+    readerNotes.value = res.data.summary_data?.reader_notes || ''
+    notesDirty.value = false
+    inspectorMode.value = 'graph'
 
     await nextTick()
     assignHeadingIds()
@@ -754,7 +941,6 @@ function quoteSelection() {
   if (!selectedText.value) return
   pendingQuoteText.value = selectedText.value
   pendingQuoteAnchor.value = selectedAnchor.value
-  activeTab.value = 'chat'
   hideSelectionMenu()
   clearSelection()
 }
@@ -877,7 +1063,6 @@ async function executeAction(action: string) {
   }
 
   hideSelectionMenu()
-  activeTab.value = 'chat'
   await streamCopilotMessage({
     query: getActionLabel(action),
     action,
@@ -895,7 +1080,6 @@ async function sendMessage() {
 
   userInput.value = ''
   clearPendingQuote()
-  activeTab.value = 'chat'
 
   await streamCopilotMessage({
     query,
@@ -907,12 +1091,10 @@ async function sendMessage() {
 }
 
 function useSuggestedQuestion(question: string) {
-  activeTab.value = 'chat'
   userInput.value = question
 }
 
 async function runArticleQuiz() {
-  activeTab.value = 'chat'
   await streamCopilotMessage({
     query: '请考考我，看我是不是真的读懂了这篇文章',
     action: 'feynman_quiz',
@@ -969,6 +1151,72 @@ function updateReadingProgress() {
   currentSectionId.value = current.id
 }
 
+async function saveReaderNotes(showSuccess = true) {
+  if (!currentSessionId.value) return
+  if (!notesDirty.value) return
+
+  isSavingNotes.value = true
+  try {
+    const res: any = await apiClient.post(`/api/copilot/session/${currentSessionId.value}/notes`, {
+      content: readerNotes.value,
+    })
+    if (res.success) {
+      notesDirty.value = false
+      if (sessionData.value?.summary_data) {
+        sessionData.value.summary_data.reader_notes = readerNotes.value
+      }
+      if (showSuccess) {
+        ElMessage.success('笔记已保存')
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || e.message || '保存笔记失败')
+    throw e
+  } finally {
+    isSavingNotes.value = false
+  }
+}
+
+function parseFilename(contentDisposition: string | null) {
+  const fallback = `${(sessionData.value?.title || '长文伴读').replace(/[\\/:*?"<>|]+/g, '-')}.md`
+  if (!contentDisposition) return fallback
+  const match = contentDisposition.match(/filename="?([^"]+)"?/)
+  return decodeURIComponent(match?.[1] || fallback)
+}
+
+async function downloadSessionMarkdown() {
+  if (!currentSessionId.value) return
+  isExporting.value = true
+
+  try {
+    if (notesDirty.value) {
+      await saveReaderNotes(false)
+    }
+
+    const baseUrl = apiClient.defaults.baseURL || ''
+    const res = await fetch(`${baseUrl}/api/copilot/session/${currentSessionId.value}/export_md`)
+    if (!res.ok) {
+      throw new Error('导出 Markdown 失败')
+    }
+
+    const blob = await res.blob()
+    const fileName = parseFilename(res.headers.get('content-disposition'))
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('Markdown 已开始下载')
+  } catch (e: any) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    isExporting.value = false
+  }
+}
+
 function formatTime(timeStr: string) {
   const date = new Date(timeStr)
   return date.toLocaleString('zh-CN', {
@@ -1000,7 +1248,7 @@ function openInDeepQA(question?: string) {
 
 function renderKnowledgeGraph() {
   const graph = sessionData.value?.summary_data?.knowledge_graph
-  if (!graphRef.value || activeTab.value !== 'graph') return
+  if (!graphRef.value || inspectorMode.value !== 'graph') return
   if (!graph?.nodes?.length) {
     graphInstance?.dispose()
     graphInstance = null
@@ -1062,7 +1310,6 @@ function renderKnowledgeGraph() {
   graphInstance.off('click')
   graphInstance.on('click', (params: any) => {
     if (params.dataType !== 'node' || !params.data?.name) return
-    activeTab.value = 'chat'
     userInput.value = `文中“${params.data.name}”和全文主线是什么关系？`
   })
 }
@@ -1090,8 +1337,8 @@ watch(viewMode, async mode => {
   }
 })
 
-watch([activeTab, sessionData], async () => {
-  if (activeTab.value !== 'graph') return
+watch([inspectorMode, sessionData], async () => {
+  if (inspectorMode.value !== 'graph') return
   await nextTick()
   renderKnowledgeGraph()
 })
@@ -1120,30 +1367,36 @@ onBeforeUnmount(() => {
 }
 
 .theme-light {
-  --bg-color: #f7f8fb;
+  --bg-color: #f3f6fb;
   --text-color: #223142;
-  --sidebar-bg: #ffffff;
-  --reading-bg: #fdfdfc;
-  --border-color: #dde3ea;
+  --sidebar-bg: rgba(255, 255, 255, 0.82);
+  --reading-bg: #fdfcf8;
+  --border-color: #dbe3ee;
   --accent-soft: rgba(47, 111, 237, 0.08);
+  --accent-strong: #2f6fed;
+  --card-shadow: 0 18px 45px rgba(25, 48, 79, 0.07);
 }
 
 .theme-paper {
-  --bg-color: #efe5d2;
-  --text-color: #4b3f31;
-  --sidebar-bg: #f6ecda;
-  --reading-bg: #fbf4e6;
-  --border-color: #d9cab1;
+  --bg-color: #e9dfc9;
+  --text-color: #4d3d2b;
+  --sidebar-bg: rgba(251, 244, 230, 0.8);
+  --reading-bg: #faf1e1;
+  --border-color: #d7c7ab;
   --accent-soft: rgba(171, 118, 34, 0.12);
+  --accent-strong: #ab7622;
+  --card-shadow: 0 18px 45px rgba(85, 61, 21, 0.08);
 }
 
 .theme-dark {
-  --bg-color: #101418;
-  --text-color: #ecf1f6;
-  --sidebar-bg: #16202b;
-  --reading-bg: #11181f;
-  --border-color: #263342;
+  --bg-color: #0d141c;
+  --text-color: #ebf1f7;
+  --sidebar-bg: rgba(21, 31, 43, 0.82);
+  --reading-bg: #111821;
+  --border-color: #263545;
   --accent-soft: rgba(102, 163, 255, 0.12);
+  --accent-strong: #6aa3ff;
+  --card-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
 }
 
 .top-bar {
@@ -1154,6 +1407,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   background: var(--sidebar-bg);
+  backdrop-filter: blur(12px);
   flex-wrap: wrap;
 }
 
@@ -1165,193 +1419,331 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.main-content {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(230px, 20%) minmax(0, 1fr) minmax(340px, 30%);
-  min-height: 0;
-}
-
-.sidebar-left,
-.sidebar-right {
-  min-height: 0;
-  background: var(--sidebar-bg);
-}
-
-.sidebar-left {
-  border-right: 1px solid var(--border-color);
-}
-
-.sidebar-right {
-  border-left: 1px solid var(--border-color);
-}
-
-.sidebar-left :deep(.el-tabs),
-.sidebar-right :deep(.el-tabs) {
-  height: 100%;
+.top-stat-pill {
   display: flex;
-  flex-direction: column;
-}
-
-.sidebar-left :deep(.el-tabs__content),
-.sidebar-right :deep(.el-tabs__content) {
-  flex: 1;
-  overflow: hidden;
-  padding: 0;
-}
-
-.sidebar-left :deep(.el-tab-pane),
-.sidebar-right :deep(.el-tab-pane) {
-  height: 100%;
-}
-
-.toc-list,
-.section-cards {
-  height: 100%;
-  overflow-y: auto;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
   gap: 10px;
-}
-
-.toc-item,
-.session-item,
-.question-chip,
-.quick-question {
-  border: 0;
-  font: inherit;
-}
-
-.toc-item {
-  text-align: left;
-  padding: 12px;
-  border-radius: 12px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.toc-item:hover,
-.toc-item.active {
-  background: var(--accent-soft);
-  border-color: var(--border-color);
-}
-
-.toc-title {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.toc-meta {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.section-card {
-  padding: 14px;
-  border-radius: 16px;
+  padding: 9px 12px;
+  border-radius: 999px;
   border: 1px solid var(--border-color);
-  background: rgba(255, 255, 255, 0.35);
-}
-
-.theme-dark .section-card {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.section-card.active {
-  box-shadow: 0 0 0 1px rgba(47, 111, 237, 0.2);
-}
-
-.section-card-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.section-card-header h4 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.section-card p,
-.section-card li {
-  line-height: 1.6;
-}
-
-.section-card ul {
-  margin: 10px 0 0;
-  padding-left: 18px;
-}
-
-.section-question {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--accent-soft);
+  background: rgba(255, 255, 255, 0.45);
   font-size: 13px;
 }
 
-.section-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
+.theme-dark .top-stat-pill {
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.reading-area {
-  position: relative;
+.main-content {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 21%) minmax(0, 1fr) minmax(360px, 30%);
+}
+
+.left-rail,
+.coach-panel {
+  min-height: 0;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(12px);
+}
+
+.left-rail {
+  border-right: 1px solid var(--border-color);
+}
+
+.coach-panel {
+  border-left: 1px solid var(--border-color);
+}
+
+.rail-scroll,
+.coach-scroll {
+  height: 100%;
   overflow-y: auto;
-  padding: 22px 48px 48px;
-  background: linear-gradient(180deg, var(--reading-bg) 0%, rgba(255, 255, 255, 0.82) 100%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.theme-dark .reading-area {
-  background: linear-gradient(180deg, var(--reading-bg) 0%, rgba(17, 24, 31, 0.92) 100%);
+.panel-card {
+  border: 1px solid var(--border-color);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: var(--card-shadow);
+  padding: 18px;
+}
+
+.theme-dark .panel-card {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+  margin-bottom: 8px;
+}
+
+.overview-card h2 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.overview-summary {
+  margin: 14px 0 0;
+  line-height: 1.75;
+}
+
+.metric-row {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-pill {
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.metric-label {
+  display: block;
+  font-size: 12px;
+  opacity: 0.72;
+  margin-bottom: 6px;
 }
 
 .reading-progress-shell {
   position: sticky;
   top: 0;
   z-index: 4;
-  height: 4px;
+  height: 5px;
   background: rgba(128, 128, 128, 0.12);
   border-radius: 999px;
   overflow: hidden;
 }
 
+.reading-progress-shell.compact {
+  position: relative;
+  top: auto;
+  margin-top: 16px;
+}
+
 .reading-progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #2f6fed, #4fb286);
+  background: linear-gradient(90deg, var(--accent-strong), #4fb286);
   border-radius: inherit;
 }
 
-.reading-status {
-  position: sticky;
-  top: 10px;
-  z-index: 4;
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.section-head span {
+  font-size: 12px;
+  opacity: 0.68;
+}
+
+.guide-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guide-step {
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+}
+
+.guide-label {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.guide-step ul,
+.bullet-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.guide-step li,
+.bullet-list li {
+  margin-bottom: 8px;
+  line-height: 1.65;
+}
+
+.section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-link,
+.soft-chip,
+.tool-chip,
+.reference-chip,
+.session-item {
+  border: 0;
+  font: inherit;
+}
+
+.section-link {
+  width: 100%;
+  text-align: left;
+  padding: 14px;
+  border-radius: 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.section-link:hover,
+.section-link.active {
+  transform: translateY(-1px);
+  background: var(--accent-soft);
+  border-color: var(--border-color);
+}
+
+.section-link-top {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 14px;
-  margin: 12px auto 18px;
-  max-width: 860px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(10px);
-  font-size: 13px;
 }
 
-.theme-dark .reading-status {
-  background: rgba(17, 24, 31, 0.78);
+.section-link-top strong {
+  line-height: 1.5;
+}
+
+.section-link-top span,
+.section-link-meta {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.section-link p {
+  margin: 10px 0 8px;
+  line-height: 1.65;
+}
+
+.reading-stage {
+  position: relative;
+  overflow-y: auto;
+  padding: 24px 44px 40px;
+  background:
+    radial-gradient(circle at top, rgba(96, 163, 255, 0.08), transparent 28%),
+    linear-gradient(180deg, var(--reading-bg) 0%, rgba(255, 255, 255, 0.84) 100%);
+}
+
+.theme-dark .reading-stage {
+  background:
+    radial-gradient(circle at top, rgba(106, 163, 255, 0.11), transparent 28%),
+    linear-gradient(180deg, var(--reading-bg) 0%, rgba(17, 24, 31, 0.95) 100%);
+}
+
+.reading-stage-header {
+  position: sticky;
+  top: 12px;
+  z-index: 4;
+  max-width: 900px;
+  margin: 14px auto 18px;
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(12px);
+}
+
+.theme-dark .reading-stage-header {
+  background: rgba(17, 24, 31, 0.76);
+}
+
+.stage-title h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.stage-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  opacity: 0.76;
+  text-align: right;
+}
+
+.focus-card {
+  max-width: 900px;
+  margin: 0 auto 26px;
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, var(--accent-soft), rgba(79, 178, 134, 0.08));
+  border: 1px solid var(--border-color);
+}
+
+.focus-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.focus-label {
+  display: block;
+  font-size: 12px;
+  opacity: 0.72;
+  margin-bottom: 8px;
+}
+
+.focus-item p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.soft-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.soft-chip,
+.tool-chip,
+.reference-chip {
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: inherit;
+  cursor: pointer;
+}
+
+.soft-chip:hover,
+.tool-chip:hover,
+.reference-chip:hover {
+  filter: brightness(0.98);
 }
 
 .markdown-content,
 .raw-content {
-  max-width: 820px;
+  max-width: 860px;
   margin: 0 auto;
 }
 
@@ -1360,116 +1752,98 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
-.reading-area :deep(.markdown-content h2) {
-  margin: 38px 0 18px;
+.reading-stage :deep(.markdown-content h2) {
+  margin: 42px 0 18px;
   padding-bottom: 10px;
   border-bottom: 2px solid var(--border-color);
-  font-size: 26px;
+  font-size: 27px;
   line-height: 1.3;
 }
 
-.reading-area :deep(.markdown-content h3) {
-  margin: 22px 0 12px;
+.reading-stage :deep(.markdown-content h3) {
+  margin: 24px 0 12px;
 }
 
-.reading-area :deep(.markdown-content p),
+.reading-stage :deep(.markdown-content p),
 .raw-content {
-  margin: 0 0 1.3em;
+  margin: 0 0 1.35em;
 }
 
-.reading-area :deep(.markdown-content blockquote) {
-  margin: 0 0 1.3em;
+.reading-stage :deep(.markdown-content blockquote) {
+  margin: 0 0 1.35em;
   padding: 12px 16px;
-  border-left: 4px solid #2f6fed;
+  border-left: 4px solid var(--accent-strong);
   background: var(--accent-soft);
   border-radius: 0 12px 12px 0;
 }
 
-.reading-area :deep(mark.lens-data),
-.reading-area :deep(mark.lens-entity),
-.reading-area :deep(mark.lens-logic) {
+.reading-stage :deep(mark.lens-data),
+.reading-stage :deep(mark.lens-entity),
+.reading-stage :deep(mark.lens-logic) {
   border-radius: 6px;
   padding: 0 4px;
   transition: all 0.2s ease;
 }
 
-.reading-area :deep(mark.lens-data) {
+.reading-stage :deep(mark.lens-data) {
   background: rgba(209, 65, 85, 0.18);
   box-shadow: inset 0 -1px 0 rgba(209, 65, 85, 0.2);
 }
 
-.reading-area :deep(mark.lens-entity) {
+.reading-stage :deep(mark.lens-entity) {
   background: rgba(47, 111, 237, 0.16);
   box-shadow: inset 0 -1px 0 rgba(47, 111, 237, 0.18);
 }
 
-.reading-area :deep(mark.lens-logic) {
+.reading-stage :deep(mark.lens-logic) {
   background: rgba(75, 176, 119, 0.18);
   box-shadow: inset 0 -1px 0 rgba(75, 176, 119, 0.2);
 }
 
-.reading-area.lens-mode-data :deep(mark.lens-entity),
-.reading-area.lens-mode-data :deep(mark.lens-logic),
-.reading-area.lens-mode-entity :deep(mark.lens-data),
-.reading-area.lens-mode-entity :deep(mark.lens-logic),
-.reading-area.lens-mode-logic :deep(mark.lens-data),
-.reading-area.lens-mode-logic :deep(mark.lens-entity) {
+.reading-stage.lens-mode-data :deep(mark.lens-entity),
+.reading-stage.lens-mode-data :deep(mark.lens-logic),
+.reading-stage.lens-mode-entity :deep(mark.lens-data),
+.reading-stage.lens-mode-entity :deep(mark.lens-logic),
+.reading-stage.lens-mode-logic :deep(mark.lens-data),
+.reading-stage.lens-mode-logic :deep(mark.lens-entity) {
   background: transparent;
   box-shadow: none;
-  opacity: 0.35;
+  opacity: 0.34;
 }
 
-.guide-card,
-.podcast-card,
-.graph-card {
-  height: 100%;
-  overflow-y: auto;
-  padding: 18px;
+.coach-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.hero-summary {
-  padding: 16px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(47, 111, 237, 0.13), rgba(79, 178, 134, 0.09));
-  border: 1px solid var(--border-color);
-}
-
-.hero-label {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.7;
-  margin-bottom: 8px;
-}
-
-.hero-summary p {
+.coach-summary,
+.claim-evidence,
+.mini-note p {
   margin: 0;
   line-height: 1.7;
 }
 
-.guide-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 14px;
+.mini-note {
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--accent-soft);
 }
 
-.guide-section {
-  margin-top: 20px;
+.mini-note.warning {
+  background: rgba(210, 87, 87, 0.08);
 }
 
-.guide-section h4 {
-  margin: 0 0 10px;
-}
-
-.guide-section ul {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.guide-section li {
+.mini-note-label {
+  display: block;
   margin-bottom: 8px;
-  line-height: 1.6;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.76;
+}
+
+.compact-list {
+  margin-top: 8px;
 }
 
 .claim-list {
@@ -1480,137 +1854,101 @@ onBeforeUnmount(() => {
 
 .claim-card {
   border: 1px solid var(--border-color);
-  border-radius: 16px;
+  border-radius: 18px;
   padding: 14px;
 }
 
 .claim-text {
   margin: 0 0 8px;
-  font-weight: 600;
-}
-
-.claim-evidence {
-  margin: 0;
+  font-weight: 700;
   line-height: 1.6;
-  opacity: 0.82;
 }
 
 .claim-actions {
   margin-top: 12px;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.question-chips,
-.quick-question-row {
+.notes-head-actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
-.question-chip,
-.quick-question {
-  padding: 10px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: inherit;
-  cursor: pointer;
-}
-
-.question-chip:hover,
-.quick-question:hover {
-  transform: translateY(-1px);
-}
-
-.meta-info {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 22px;
-  font-size: 13px;
-}
-
-.meta-info span {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-}
-
-.podcast-turn {
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  margin-bottom: 12px;
-}
-
-.podcast-turn.host {
-  background: rgba(47, 111, 237, 0.06);
-}
-
-.podcast-turn.guest {
-  background: rgba(79, 178, 134, 0.06);
-}
-
-.speaker {
+.notes-status {
   font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 8px;
-}
-
-.podcast-turn p {
-  margin: 0;
-  line-height: 1.7;
-}
-
-.knowledge-graph {
-  height: 380px;
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-}
-
-.graph-hint {
-  margin-top: 12px;
-  font-size: 13px;
   opacity: 0.72;
 }
 
-.chat-container {
-  height: 100%;
+.notes-status.dirty {
+  color: #d96c2b;
+  opacity: 1;
+}
+
+.notes-card :deep(.el-textarea__inner) {
+  min-height: 180px;
+  border-radius: 16px;
+}
+
+.notes-footer {
+  margin-top: 12px;
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.chat-card {
+  min-height: 540px;
 }
 
 .chat-messages {
-  flex: 1;
+  max-height: 460px;
   overflow-y: auto;
-  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  padding-right: 4px;
 }
 
 .message-item {
-  max-width: 92%;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.message-item.user {
-  align-self: flex-end;
+.message-content {
+  padding: 14px 16px;
+  border-radius: 18px;
+  line-height: 1.7;
 }
 
-.message-item.assistant {
-  align-self: flex-start;
+.message-item.user .message-content {
+  background: var(--accent-soft);
+}
+
+.message-item.assistant .message-content {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--border-color);
+}
+
+.theme-dark .message-item.assistant .message-content {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .quote-text {
-  padding: 10px 12px;
-  border-left: 3px solid #4fb286;
-  border-radius: 0 12px 12px 0;
-  background: rgba(79, 178, 134, 0.08);
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px dashed var(--border-color);
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.theme-dark .quote-text {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .quote-text.clickable {
@@ -1620,211 +1958,273 @@ onBeforeUnmount(() => {
 .quote-head {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
 }
 
 .quote-label {
-  font-size: 12px;
   font-weight: 700;
-  color: #2f8f5b;
 }
 
 .quote-jump {
-  font-size: 12px;
-  opacity: 0.75;
+  opacity: 0.72;
 }
 
 .quote-text p {
   margin: 0;
-  line-height: 1.5;
-  font-size: 13px;
+  line-height: 1.65;
 }
 
-.message-content {
-  padding: 12px 14px;
-  border-radius: 18px;
-  line-height: 1.6;
+.reference-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.user-text {
-  background: #2f6fed;
-  color: white;
-  border-bottom-right-radius: 6px;
-}
-
-.assistant-markdown {
-  background: rgba(255, 255, 255, 0.72);
-  color: inherit;
-  border-bottom-left-radius: 6px;
-  border: 1px solid var(--border-color);
-}
-
-.theme-dark .assistant-markdown {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.assistant-markdown :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.cursor {
-  color: #2f6fed;
-  animation: blink 1s infinite;
-}
-
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+.reference-chip {
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .chat-input-area {
-  border-top: 1px solid var(--border-color);
-  padding: 16px;
-  background: var(--sidebar-bg);
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .pending-quote {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(250, 173, 20, 0.12);
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-
-.quick-question-row {
-  margin-bottom: 12px;
-}
-
-.quick-question {
-  text-align: left;
-}
-
-.chat-actions {
-  margin-top: 12px;
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.selection-menu {
-  position: fixed;
-  z-index: 9999;
-  background: #1d2939;
-  padding: 6px;
-  border-radius: 10px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-  display: flex;
-  gap: 4px;
-}
-
-.selection-menu .el-button {
-  background: transparent;
-  border: 0;
-  color: #f8fafc;
-}
-
-.selection-menu .el-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.import-upload {
-  width: 100%;
-}
-
-.selected-file-card {
-  margin-top: 14px;
-  padding: 14px 16px;
-  border: 1px solid var(--border-color);
   border-radius: 14px;
   background: var(--accent-soft);
 }
 
-.selected-file-name {
-  font-weight: 600;
-  margin-bottom: 4px;
+.chat-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.selected-file-meta {
+.tool-switcher {
+  display: flex;
+  gap: 8px;
+}
+
+.tool-chip.active {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.tool-panel {
+  min-height: 240px;
+}
+
+.knowledge-graph {
+  height: 320px;
+}
+
+.graph-hint {
+  margin: 12px 0 0;
   font-size: 12px;
+  opacity: 0.72;
+}
+
+.podcast-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.podcast-turn {
+  border-radius: 18px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  line-height: 1.7;
+}
+
+.podcast-turn.host {
+  background: rgba(47, 111, 237, 0.08);
+}
+
+.podcast-turn.guest {
+  background: rgba(79, 178, 134, 0.08);
+}
+
+.speaker {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
   opacity: 0.76;
 }
 
 .empty-state {
   flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+.selection-menu {
+  position: fixed;
+  z-index: 30;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(17, 24, 31, 0.92);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+}
+
+.selection-menu :deep(.el-button) {
+  margin: 0;
+}
+
+.selected-file-card {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+}
+
+.selected-file-name {
+  font-weight: 700;
+}
+
+.selected-file-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.72;
 }
 
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
 }
 
 .session-item {
   width: 100%;
   text-align: left;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  background: var(--sidebar-bg);
+  padding: 14px;
+  border-radius: 18px;
+  background: transparent;
   color: inherit;
+  border: 1px solid transparent;
   cursor: pointer;
 }
 
 .session-item:hover,
 .session-item.active {
   background: var(--accent-soft);
+  border-color: var(--border-color);
 }
 
 .session-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 8px;
+  font-weight: 700;
 }
 
 .session-meta {
+  margin-top: 8px;
   display: flex;
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
-  opacity: 0.75;
+  opacity: 0.72;
 }
 
-@media (max-width: 1200px) {
+.cursor {
+  display: inline-block;
+  margin-left: 2px;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 1440px) {
   .main-content {
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: minmax(240px, 26%) minmax(0, 1fr) minmax(330px, 34%);
   }
 
-  .sidebar-right {
+  .reading-stage {
+    padding: 20px 28px 34px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .main-content {
+    grid-template-columns: minmax(250px, 280px) minmax(0, 1fr);
+  }
+
+  .coach-panel {
     grid-column: 1 / -1;
     border-left: 0;
     border-top: 1px solid var(--border-color);
-    min-height: 420px;
+  }
+
+  .coach-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .chat-card,
+  .extra-card {
+    grid-column: 1 / -1;
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .main-content {
     grid-template-columns: 1fr;
   }
 
-  .sidebar-left {
-    display: none;
+  .left-rail,
+  .coach-panel {
+    border: 0;
   }
 
-  .reading-area {
-    padding: 16px 18px 26px;
+  .left-rail {
+    border-bottom: 1px solid var(--border-color);
   }
 
-  .sidebar-right {
-    min-height: 380px;
+  .coach-scroll {
+    grid-template-columns: 1fr;
+  }
+
+  .reading-stage {
+    padding: 18px 16px 26px;
+  }
+
+  .reading-stage-header,
+  .focus-grid,
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .reading-stage-header {
+    flex-direction: column;
+  }
+
+  .stage-meta {
+    text-align: left;
+  }
+
+  .top-bar-right {
+    width: 100%;
   }
 }
 </style>

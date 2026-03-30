@@ -1,0 +1,17 @@
+[
+  {
+    "name": "short_article_demo",
+    "raw_text": "AI assistants are moving from simple Q&A tools to workflow partners. The shift matters because users increasingly want help planning, verifying claims, and keeping context across long sessions. However, reliability still depends on retrieval quality, memory design, and clear evidence linking. Teams that only optimize for fluent answers often miss the trust layer that comes from grounded references and transparent reasoning.",
+    "summary_keywords": ["workflow partners", "retrieval quality", "trust"],
+    "questions": [
+      {
+        "query": "Why does the article say trust matters?",
+        "expected_sections": ["正文"]
+      },
+      {
+        "query": "What are the main bottlenecks for reliability?",
+        "expected_sections": ["正文"]
+      }
+    ]
+  }
+]

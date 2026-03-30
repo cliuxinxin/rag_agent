@@ -265,10 +265,10 @@ def build_response_prompt(
     ) or "- 暂无"
 
     action_instruction_map = {
-        "explain": "请解释选中内容的真实含义，先讲一句话结论，再拆概念、逻辑和上下文。",
+        "explain": "请解释选中内容的真实含义，先讲一句话结论，再拆概念、逻辑和上下文，最后说明它在全文里的作用。",
         "translate": "请把选中内容翻译成更自然的中文，并补一句它在全文里的作用。",
         "summarize": "请总结这段内容，输出 1 句摘要 + 3 个要点。",
-        "question": "请基于上下文回答用户问题。如果上下文不足，请明确说还缺什么信息。",
+        "question": "请基于上下文回答用户问题。先直接回答，再说明它与全文主线的关系，最后给出 1 个建议继续追问或继续阅读的方向。如果上下文不足，请明确说还缺什么信息。",
         "explain_5yr": "请像给 5 岁小朋友讲故事一样解释，但不要牺牲原意。",
         "extract_quote": "请提炼一句不超过 30 字的金句，并用一句话解释它为什么重要。",
         "feynman_quiz": "请提出 1 个真正能暴露理解深浅的挑战问题，只输出问题本身。",
@@ -316,11 +316,17 @@ def ensure_summary_defaults(summary_data: Dict[str, Any], sections: List[Dict[st
     summary_data.setdefault("summary", "这篇文章的导读暂时生成失败。")
     summary_data.setdefault("takeaways", [])
     summary_data.setdefault("section_summaries", [])
+    summary_data.setdefault("study_guide", {
+        "before_reading": [],
+        "while_reading": [],
+        "after_reading": [],
+    })
     summary_data.setdefault("podcast_script", [])
     summary_data.setdefault("knowledge_graph", {"nodes": [], "edges": []})
     summary_data.setdefault("argument_map", {"claims": [], "tensions": []})
     summary_data.setdefault("open_questions", [])
     summary_data.setdefault("conversation_memory", {"summary": "", "recent_exchanges": []})
+    summary_data.setdefault("reader_notes", "")
     summary_data["sections"] = [
         {
             "id": section["id"],
@@ -377,6 +383,7 @@ def summarizer_node(state: CopilotState) -> CopilotState:
 请阅读下面这个章节，并输出严格 JSON：
 {{
   "summary": "用 1 句话概括这一节",
+  "role_in_article": "这一节在全文里的作用",
   "takeaways": ["要点1", "要点2"],
   "question": "读完这一节后最值得追问的 1 个问题",
   "hidden_assumption": "这一节默认成立但未明说的前提"
@@ -392,6 +399,7 @@ def summarizer_node(state: CopilotState) -> CopilotState:
         except Exception:
             payload = {
                 "summary": f"{section['title']} 的摘要生成失败。",
+                "role_in_article": "",
                 "takeaways": [],
                 "question": "",
                 "hidden_assumption": "",
@@ -402,6 +410,7 @@ def summarizer_node(state: CopilotState) -> CopilotState:
             "title": section["title"],
             "word_count": section["word_count"],
             "summary": payload.get("summary", ""),
+            "role_in_article": payload.get("role_in_article", ""),
             "takeaways": payload.get("takeaways", [])[:3],
             "question": payload.get("question", ""),
             "hidden_assumption": payload.get("hidden_assumption", ""),
@@ -411,6 +420,7 @@ def summarizer_node(state: CopilotState) -> CopilotState:
         [
             f"章节：{item['title']}\n"
             f"摘要：{item['summary']}\n"
+            f"作用：{item['role_in_article'] or '无'}\n"
             f"要点：{'；'.join(item['takeaways']) or '无'}\n"
             f"追问：{item['question'] or '无'}\n"
             f"隐含前提：{item['hidden_assumption'] or '无'}"
@@ -423,6 +433,11 @@ def summarizer_node(state: CopilotState) -> CopilotState:
 {{
   "summary": "一句话总结全文",
   "takeaways": ["核心看点1", "核心看点2", "核心看点3"],
+  "study_guide": {{
+    "before_reading": ["开始读之前先抓什么"],
+    "while_reading": ["阅读时要特别留意什么"],
+    "after_reading": ["读完后如何检验自己是否真的读懂"]
+  }},
   "podcast_script": [
     {{"speaker": "A", "text": "..." }},
     {{"speaker": "B", "text": "..." }}
@@ -444,6 +459,7 @@ def summarizer_node(state: CopilotState) -> CopilotState:
 1. 要覆盖全文，而不是只看开头。
 2. `section_id` 只能从给定章节里选择。
 3. `takeaways` 以用户能继续阅读下去为目标，不要写成空话。
+4. `study_guide` 要写得像真正的阅读路线，而不是泛泛的鸡汤。
 
 章节摘要：
 {digest_text}
